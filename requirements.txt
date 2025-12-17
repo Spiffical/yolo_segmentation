@@ -4,3 +4,7 @@ requests
 ultralytics
 huggingface_hub
 dill
+pycocotools
+opencv-python
+pyyaml
+numpy
