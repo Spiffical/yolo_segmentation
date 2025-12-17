@@ -109,17 +109,26 @@ if [ -f "${DATA_TARBALL}" ]; then
     echo "Extracting ${DATA_TARBALL}..."
     tar -xzf "${DATA_TARBALL}" -C "${LOCAL_DATA_DIR}"
     echo "Extraction complete."
+    echo "Contents:"
+    ls -la "${LOCAL_DATA_DIR}"
     
-    # Check for expected structure
-    if [ -f "${LOCAL_DATA_DIR}/train.json" ]; then
-        COCO_JSON="${LOCAL_DATA_DIR}/train.json"
-        IMAGE_DIR="${LOCAL_DATA_DIR}/images"
-    elif [ -f "${LOCAL_DATA_DIR}/seg_masks/train.json" ]; then
-        COCO_JSON="${LOCAL_DATA_DIR}/seg_masks/train.json"
-        IMAGE_DIR="${LOCAL_DATA_DIR}/images/train"
-    else
-        echo "ERROR: Could not find train.json in extracted data"
-        ls -la "${LOCAL_DATA_DIR}"
+    # Find COCO JSON (look for *.json files)
+    COCO_JSON=$(find "${LOCAL_DATA_DIR}" -name "*.json" -type f | head -1)
+    
+    # Find images directory (look for directory containing images)
+    IMAGE_DIR=$(find "${LOCAL_DATA_DIR}" -type d -name "images" | head -1)
+    if [ -z "${IMAGE_DIR}" ]; then
+        # If no 'images' dir, look for 'train' dir
+        IMAGE_DIR=$(find "${LOCAL_DATA_DIR}" -type d -name "train" | head -1)
+    fi
+    if [ -z "${IMAGE_DIR}" ]; then
+        # Last resort: find a directory with image files
+        IMAGE_DIR=$(find "${LOCAL_DATA_DIR}" -type f \( -name "*.jpg" -o -name "*.png" \) | head -1 | xargs dirname)
+    fi
+    
+    if [ -z "${COCO_JSON}" ] || [ -z "${IMAGE_DIR}" ]; then
+        echo "ERROR: Could not find JSON or images in extracted data"
+        find "${LOCAL_DATA_DIR}" -type f | head -20
         exit 1
     fi
     

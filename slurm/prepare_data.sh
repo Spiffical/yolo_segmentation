@@ -7,14 +7,11 @@
 # The conversion to YOLO format happens on the cluster at job start.
 #
 # Usage:
-#   bash slurm/prepare_data.sh
+#   bash slurm/prepare_data.sh [coco_json] [image_dir] [output]
 #
-# Expected input structure:
-#   data/seg_masks/train.json     # COCO annotations with RLE masks
-#   data/images/train/            # OR a mounted drive with images
-#
-# Output:
-#   data/mbari_raw.tar.gz         # Tarball for cluster transfer
+# Examples:
+#   bash slurm/prepare_data.sh  # Use defaults
+#   bash slurm/prepare_data.sh data/seg_masks/train.json /mnt/z/yolo/data/images/train
 #
 # ============================================================================
 
@@ -24,7 +21,6 @@ set -e
 COCO_JSON="${1:-data/seg_masks/train.json}"
 IMAGE_DIR="${2:-/mnt/z/yolo/data/images/train}"
 OUTPUT_TARBALL="${3:-data/mbari_raw.tar.gz}"
-STAGING_DIR="data/.staging_raw"
 
 echo "============================================"
 echo "Preparing Raw Data Tarball for DRAC"
@@ -46,76 +42,66 @@ if [ ! -d "${IMAGE_DIR}" ]; then
     exit 1
 fi
 
-# Create staging directory
+# Count images
 echo ""
-echo "Creating staging directory..."
-rm -rf "${STAGING_DIR}"
-mkdir -p "${STAGING_DIR}/images"
-
-# Copy COCO JSON
-echo "Copying COCO JSON..."
-cp "${COCO_JSON}" "${STAGING_DIR}/train.json"
-
-# Get list of images from JSON and copy them
-echo "Extracting image list from JSON..."
-python3 -c "
+echo "Analyzing dataset..."
+python3 << EOF
 import json
 import os
-import shutil
-from tqdm import tqdm
 
 with open('${COCO_JSON}', 'r') as f:
     data = json.load(f)
 
-images = data['images']
 image_dir = '${IMAGE_DIR}'
-staging_dir = '${STAGING_DIR}/images'
+total = len(data['images'])
+found = sum(1 for img in data['images'] if os.path.exists(os.path.join(image_dir, img['file_name'])))
 
-print(f'Copying {len(images)} images...')
-copied = 0
-missing = 0
+print(f"Images in JSON: {total}")
+print(f"Images found: {found}")
+print(f"Annotations: {len(data['annotations'])}")
+print(f"Categories: {len(data['categories'])}")
 
-for img in tqdm(images):
-    src = os.path.join(image_dir, img['file_name'])
-    dst = os.path.join(staging_dir, img['file_name'])
-    if os.path.exists(src):
-        shutil.copy2(src, dst)
-        copied += 1
-    else:
-        missing += 1
-
-print(f'Copied: {copied}, Missing: {missing}')
-"
-
-# Get size info
-echo ""
-echo "Staging directory contents:"
-TOTAL_IMAGES=$(ls "${STAGING_DIR}/images" | wc -l)
-TOTAL_SIZE=$(du -sh "${STAGING_DIR}" | cut -f1)
-echo "  - Images: ${TOTAL_IMAGES}"
-echo "  - Total size: ${TOTAL_SIZE}"
+if found < total:
+    print(f"WARNING: {total - found} images are missing!")
+EOF
 
 # Create tarball
+# We use a simple approach: tar the JSON and the image directory
 echo ""
-echo "Creating tarball (this may take a while for large datasets)..."
-tar -czf "${OUTPUT_TARBALL}" -C "${STAGING_DIR}" .
+echo "Creating tarball..."
+echo "This may take a while for large datasets..."
 
-# Cleanup staging
-echo "Cleaning up staging directory..."
-rm -rf "${STAGING_DIR}"
+# Get absolute paths
+COCO_JSON_ABS=$(realpath "${COCO_JSON}")
+IMAGE_DIR_ABS=$(realpath "${IMAGE_DIR}")
 
-# Show result
+# Create tar archive
+# Structure: train.json + images/
+tar -czhf "${OUTPUT_TARBALL}" \
+    -C "$(dirname "${COCO_JSON_ABS}")" "$(basename "${COCO_JSON_ABS}")" \
+    -C "$(dirname "${IMAGE_DIR_ABS}")" "$(basename "${IMAGE_DIR_ABS}")"
+
+# Rename entries to expected structure (train.json + images/)
+# Actually tar doesn't easily allow renaming. Let's check what we created:
+echo ""
+echo "Tarball contents (first 10 entries):"
+tar -tzf "${OUTPUT_TARBALL}" | head -10
+
 TARBALL_SIZE=$(du -sh "${OUTPUT_TARBALL}" | cut -f1)
 echo ""
 echo "============================================"
-echo "Tarball Created Successfully!"
+echo "Tarball Created!"
 echo "============================================"
 echo ""
 echo "Output: ${OUTPUT_TARBALL}"
 echo "Size: ${TARBALL_SIZE}"
 echo ""
-echo "To upload to DRAC (use Globus for large files):"
-echo "  scp ${OUTPUT_TARBALL} <username>@narval.computecanada.ca:~/projects/def-kmoran/<username>/yolo_segmentation/data/"
+echo "Expected structure inside tar:"
+echo "  - $(basename "${COCO_JSON_ABS}")  (COCO annotations)"
+echo "  - $(basename "${IMAGE_DIR_ABS}")/  (images)"
 echo ""
-echo "Then submit training job:"
+echo "Upload to DRAC (use Globus for large files):"
+echo "  scp ${OUTPUT_TARBALL} <user>@narval.computecanada.ca:~/projects/def-kmoran/<user>/yolo_segmentation/data/"
+echo ""
+echo "Then submit job:"
 echo "  sbatch slurm/train.sh --mode top_n --top_n 100"
