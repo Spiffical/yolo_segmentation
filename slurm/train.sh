@@ -18,23 +18,26 @@
 #   sbatch slurm/train.sh                              # Use defaults
 #   sbatch slurm/train.sh --mode binary                # Binary segmentation
 #   sbatch slurm/train.sh --mode top_n --top_n 100     # Top 100 categories
-#   sbatch slurm/train.sh --repo /path/to/repo --data /path/to/data.tar.gz
+#   sbatch slurm/train.sh --model yolo11l-seg.pt       # Use larger model
 #
-# Key arguments:
+# Arguments:
 #   --repo DIR          Path to yolo_segmentation repo (default: ~/yolo_segmentation)
 #   --data FILE         Path to data tarball (default: REPO/data/mbari_raw.tar.gz)
 #   --mode MODE         Conversion mode: binary, top_n, all (default: top_n)
 #   --top_n N           Number of top categories for top_n mode (default: 100)
 #   --val_ratio R       Validation split ratio (default: 0.2)
+#   --model MODEL       YOLO model: yolo11n-seg.pt, yolo11s-seg.pt, yolo11m-seg.pt,
+#                                   yolo11l-seg.pt, yolo11x-seg.pt (default: yolo11m-seg.pt)
+#   --epochs N          Number of training epochs (default: 100)
+#   --batch N           Batch size (default: 16)
 #
-# Data format:
-#   The script expects raw data (COCO JSON + images) and will convert
-#   to YOLO format at job start in SLURM_TMPDIR for fast I/O.
+# Output:
+#   Results saved to: $SCRATCH/yolo_seg/<date>/<mode>_<job_id>/
+#   Includes: run_config.yaml, weights/best.pt, weights/last.pt, args.yaml
 #
 # Before first run:
-#   1. Run: bash slurm/setup_env.sh          # Create virtual environment
-#   2. Create data tarball with raw COCO data:
-#      bash slurm/prepare_data.sh
+#   1. Run: bash slurm/setup_env.sh
+#   2. Create data tarball: bash slurm/prepare_data.sh
 # ============================================================================
 
 set -e  # Exit on error
@@ -48,6 +51,11 @@ DATA_TARBALL=""
 CONVERT_MODE="top_n"
 CONVERT_TOP_N="100"
 VAL_RATIO="0.2"
+
+# Default training options
+MODEL="yolo11m-seg.pt"
+EPOCHS="100"
+BATCH="16"
 
 # Parse command line arguments
 TRAIN_ARGS=()
@@ -71,6 +79,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --val_ratio)
             VAL_RATIO="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        --epochs)
+            EPOCHS="$2"
+            shift 2
+            ;;
+        --batch)
+            BATCH="$2"
             shift 2
             ;;
         *)
@@ -99,6 +119,13 @@ fi
 
 VENV_PATH="${REPO_DIR}/.venv"
 
+# Output directory - use $SCRATCH for large training outputs
+# Organized as: $SCRATCH/yolo_seg/<date>/<mode>_<job_id>/
+OUTPUT_BASE="${SCRATCH}/yolo_seg"
+RUN_DATE=$(date +%Y-%m-%d)
+RUN_NAME="${CONVERT_MODE}_${SLURM_JOB_ID}"
+OUTPUT_DIR="${OUTPUT_BASE}/${RUN_DATE}/${RUN_NAME}"
+
 echo "============================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
@@ -107,11 +134,42 @@ echo "Started: $(date)"
 echo "============================================"
 echo "Repo: ${REPO_DIR}"
 echo "Data: ${DATA_TARBALL}"
-echo "Mode: ${CONVERT_MODE}"
+echo "Mode: ${CONVERT_MODE} (top_n=${CONVERT_TOP_N})"
+echo "Model: ${MODEL}"
+echo "Epochs: ${EPOCHS}, Batch: ${BATCH}"
+echo "Output: ${OUTPUT_DIR}"
 echo "============================================"
 
-# Create logs directory
+# Create directories
 mkdir -p "${REPO_DIR}/logs"
+mkdir -p "${OUTPUT_DIR}"
+
+# Save run configuration for reproducibility
+cat > "${OUTPUT_DIR}/run_config.yaml" << EOF
+# Run configuration - saved at job start
+job_id: ${SLURM_JOB_ID}
+node: ${SLURM_NODELIST}
+date: $(date -Iseconds)
+
+# Paths
+repo_dir: ${REPO_DIR}
+data_tarball: ${DATA_TARBALL}
+output_dir: ${OUTPUT_DIR}
+
+# Data conversion
+mode: ${CONVERT_MODE}
+top_n: ${CONVERT_TOP_N}
+val_ratio: ${VAL_RATIO}
+
+# Training
+model: ${MODEL}
+epochs: ${EPOCHS}
+batch: ${BATCH}
+imgsz: 640
+extra_args: "${TRAIN_ARGS[*]}"
+EOF
+
+echo "Run config saved to: ${OUTPUT_DIR}/run_config.yaml"
 
 # ============================================================================
 # 1. Setup Python Environment
@@ -227,19 +285,20 @@ ls -la "${YOLO_DATASET}"
 # ============================================================================
 echo ""
 echo "[4/5] Starting training..."
+echo "Output will be saved to: ${OUTPUT_DIR}"
 echo ""
 
 DATASET_CONFIG="${YOLO_DATASET}/dataset.yaml"
 
 python scripts/train.py \
     --data "${DATASET_CONFIG}" \
-    --model yolo11m-seg.pt \
-    --epochs 100 \
-    --batch 16 \
+    --model "${MODEL}" \
+    --epochs "${EPOCHS}" \
+    --batch "${BATCH}" \
     --imgsz 640 \
     --workers 8 \
-    --project "${REPO_DIR}/runs/segment" \
-    --name "drac_${SLURM_JOB_ID}" \
+    --project "${OUTPUT_DIR}" \
+    --name "train" \
     "${TRAIN_ARGS[@]}"
 
 # ============================================================================
@@ -249,11 +308,30 @@ echo ""
 echo "[5/5] Training complete!"
 echo ""
 
-RESULTS_DIR="${REPO_DIR}/runs/segment/drac_${SLURM_JOB_ID}"
+RESULTS_DIR="${OUTPUT_DIR}/train"
 if [ -d "${RESULTS_DIR}" ]; then
     echo "============================================"
     echo "Results saved to: ${RESULTS_DIR}"
     echo "Best weights: ${RESULTS_DIR}/weights/best.pt"
+    echo ""
+    echo "Directory structure:"
+    echo "  ${OUTPUT_BASE}/"
+    echo "  └── ${RUN_DATE}/"
+    echo "      └── ${RUN_NAME}/"
+    echo "          └── train/"
+    echo "              ├── weights/best.pt"
+    echo "              ├── weights/last.pt"
+    echo "              └── results.csv"
+    echo ""
+    
+    # Create a symlink in the repo for convenience
+    LATEST_LINK="${REPO_DIR}/runs/latest"
+    mkdir -p "${REPO_DIR}/runs"
+    rm -f "${LATEST_LINK}"
+    ln -s "${RESULTS_DIR}" "${LATEST_LINK}"
+    echo "Symlink created: ${LATEST_LINK} -> ${RESULTS_DIR}"
+    
+    echo ""
     echo "Finished: $(date)"
     echo "============================================"
 fi
