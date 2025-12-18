@@ -4,7 +4,13 @@
 # ============================================================================
 #
 # Run this script ONCE before submitting training jobs.
-# This creates a persistent virtual environment in the project directory.
+# This creates a persistent virtual environment with proper DRAC modules.
+#
+# Best practices followed:
+#   - Use StdEnv for consistent software environment
+#   - Load opencv via module (not pip) for optimized binaries
+#   - Use --no-index for pip to prefer Alliance wheels
+#   - Load scipy-stack for optimized numpy/scipy
 #
 # Usage:
 #   bash slurm/setup_env.sh
@@ -29,8 +35,23 @@ echo "Virtual env path: ${VENV_PATH}"
 echo ""
 echo "[1/4] Loading modules..."
 
-module load python/3.11 cuda/12.2 cudnn/9.2
+# Load standard environment first
+module load StdEnv/2023
 
+# Load Python and GPU support
+module load python/3.11 cuda cudnn
+
+# Load OpenCV via module (provides optimized opencv_python bindings)
+module load opencv/4.8.1
+
+# Load scipy-stack for optimized numpy, scipy, etc.
+module load scipy-stack
+
+echo ""
+echo "Loaded modules:"
+module list
+
+echo ""
 python --version
 which python
 
@@ -45,7 +66,8 @@ if [ -d "${VENV_PATH}" ]; then
     rm -rf "${VENV_PATH}"
 fi
 
-python -m venv "${VENV_PATH}"
+# Use --no-download to use only system packages initially
+virtualenv --no-download "${VENV_PATH}"
 source "${VENV_PATH}/bin/activate"
 
 echo "Virtual environment created and activated."
@@ -58,21 +80,31 @@ python --version
 echo ""
 echo "[3/4] Installing dependencies..."
 
-# Upgrade pip
-pip install --upgrade pip
+# Upgrade pip using Alliance wheel
+pip install --no-index --upgrade pip
 
-# Install from requirements (with --no-index to use wheelhouse)
-# If packages aren't in wheelhouse, they'll be downloaded
+# Check what wheels are available for our packages
+echo ""
+echo "Checking available wheels..."
+avail_wheels ultralytics pycocotools tqdm pyyaml || true
+
+# Install packages - prefer Alliance wheels (--no-index), fallback to PyPI
+echo ""
+echo "Installing packages..."
+
+# Core packages from Alliance wheels
 pip install --no-index ultralytics || pip install ultralytics
 pip install --no-index pycocotools || pip install pycocotools
-pip install --no-index opencv-python-headless || pip install opencv-python-headless
 pip install --no-index tqdm || pip install tqdm
 pip install --no-index pyyaml || pip install pyyaml
 
-# Verify installation
+# Note: OpenCV is already available from the opencv module
+# Note: numpy/scipy are from scipy-stack module
+
+# Show installed packages
 echo ""
 echo "Installed packages:"
-pip list | grep -E "ultralytics|torch|opencv|pycocotools"
+pip list | grep -iE "ultralytics|torch|opencv|pycocotools|numpy" || true
 
 # ============================================================================
 # 4. Test Installation
@@ -86,7 +118,7 @@ print(f'PyTorch: {torch.__version__}')
 print(f'CUDA available: {torch.cuda.is_available()}')
 if torch.cuda.is_available():
     print(f'CUDA version: {torch.version.cuda}')
-    print(f'GPU: {torch.cuda.get_device_name(0)}')
+    print(f'GPU count: {torch.cuda.device_count()}')
 
 from ultralytics import YOLO
 print('ultralytics: OK')
@@ -96,7 +128,24 @@ print(f'OpenCV: {cv2.__version__}')
 
 from pycocotools import mask
 print('pycocotools: OK')
+
+import numpy as np
+print(f'NumPy: {np.__version__}')
 "
+
+# ============================================================================
+# 5. Save Module Load Commands
+# ============================================================================
+# Save the module load commands so train.sh can use them
+cat > "${PROJECT_DIR}/slurm/.modules" << 'EOF'
+module load StdEnv/2023
+module load python/3.11 cuda cudnn
+module load opencv/4.8.1
+module load scipy-stack
+EOF
+
+echo ""
+echo "Module load commands saved to slurm/.modules"
 
 # ============================================================================
 # Summary
@@ -108,10 +157,16 @@ echo "============================================"
 echo ""
 echo "Virtual environment: ${VENV_PATH}"
 echo ""
+echo "Required modules (load these in your job script):"
+echo "  module load StdEnv/2023"
+echo "  module load python/3.11 cuda cudnn"
+echo "  module load opencv/4.8.1"
+echo "  module load scipy-stack"
+echo ""
 echo "Next steps:"
 echo "  1. Prepare your data tarball:"
-echo "     tar -czf data/mbari_dataset.tar.gz -C data yolo_dataset"
+echo "     bash slurm/prepare_data.sh"
 echo ""
 echo "  2. Submit a training job:"
-echo "     sbatch slurm/train.sh"
+echo "     sbatch slurm/train.sh --mode binary"
 echo ""

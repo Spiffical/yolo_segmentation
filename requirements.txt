@@ -1,10 +1,24 @@
-fathomnet
-tqdm
-requests
+# Core dependencies for YOLOv11 segmentation training
+# Note: On DRAC cluster, some packages are loaded via modules instead of pip
+
+# Training
 ultralytics
+
+# Data conversion
+pycocotools
+pyyaml
+tqdm
+
+# FathomNet image download
+fathomnet
+requests
 huggingface_hub
 dill
-pycocotools
+
+# OpenCV - for local development only
+# On DRAC: use 'module load opencv' instead
 opencv-python
-pyyaml
+
+# NumPy - usually comes with torch/ultralytics
+# On DRAC: use 'module load scipy-stack' for optimized version
 numpy

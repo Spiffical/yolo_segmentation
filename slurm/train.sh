@@ -8,17 +8,24 @@
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=${USER}@example.com
+#SBATCH --mail-user=spencer.bialek@gmail.com
 
 # ============================================================================
 # YOLOv11 Segmentation Training on DRAC Cluster
 # ============================================================================
 # 
 # Usage:
-#   sbatch slurm/train.sh                              # Full training
+#   sbatch slurm/train.sh                              # Use defaults
 #   sbatch slurm/train.sh --mode binary                # Binary segmentation
 #   sbatch slurm/train.sh --mode top_n --top_n 100     # Top 100 categories
-#   sbatch --time=2:00:00 slurm/train.sh               # Override SLURM time
+#   sbatch slurm/train.sh --repo /path/to/repo --data /path/to/data.tar.gz
+#
+# Key arguments:
+#   --repo DIR          Path to yolo_segmentation repo (default: ~/yolo_segmentation)
+#   --data FILE         Path to data tarball (default: REPO/data/mbari_raw.tar.gz)
+#   --mode MODE         Conversion mode: binary, top_n, all (default: top_n)
+#   --top_n N           Number of top categories for top_n mode (default: 100)
+#   --val_ratio R       Validation split ratio (default: 0.2)
 #
 # Data format:
 #   The script expects raw data (COCO JSON + images) and will convert
@@ -28,22 +35,14 @@
 #   1. Run: bash slurm/setup_env.sh          # Create virtual environment
 #   2. Create data tarball with raw COCO data:
 #      bash slurm/prepare_data.sh
-#   3. Adjust email address above
 # ============================================================================
 
 set -e  # Exit on error
 
-echo "============================================"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Node: $SLURM_NODELIST"
-echo "GPUs: $SLURM_GPUS_PER_NODE"
-echo "Started: $(date)"
-echo "============================================"
-
-# Configuration
-PROJECT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
-DATA_TARBALL="${PROJECT_DIR}/data/mbari_raw.tar.gz"
-VENV_PATH="${PROJECT_DIR}/.venv"
+# Default paths (adjust for your DRAC setup)
+DEFAULT_REPO="${HOME}/yolo_segmentation"
+REPO_DIR=""
+DATA_TARBALL=""
 
 # Default conversion options
 CONVERT_MODE="top_n"
@@ -54,6 +53,14 @@ VAL_RATIO="0.2"
 TRAIN_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --repo)
+            REPO_DIR="$2"
+            shift 2
+            ;;
+        --data)
+            DATA_TARBALL="$2"
+            shift 2
+            ;;
         --mode)
             CONVERT_MODE="$2"
             shift 2
@@ -73,8 +80,38 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Create logs directory if needed
-mkdir -p "${PROJECT_DIR}/logs"
+# Set defaults if not provided
+if [ -z "${REPO_DIR}" ]; then
+    # Try to find repo: first check if we're in it, then use default
+    if [ -f "scripts/train.py" ]; then
+        REPO_DIR="$(pwd)"
+    elif [ -d "${DEFAULT_REPO}" ]; then
+        REPO_DIR="${DEFAULT_REPO}"
+    else
+        echo "ERROR: Could not find repo. Use --repo /path/to/yolo_segmentation"
+        exit 1
+    fi
+fi
+
+if [ -z "${DATA_TARBALL}" ]; then
+    DATA_TARBALL="${REPO_DIR}/data/mbari_raw.tar.gz"
+fi
+
+VENV_PATH="${REPO_DIR}/.venv"
+
+echo "============================================"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Node: $SLURM_NODELIST"
+echo "GPUs: $SLURM_GPUS_PER_NODE"
+echo "Started: $(date)"
+echo "============================================"
+echo "Repo: ${REPO_DIR}"
+echo "Data: ${DATA_TARBALL}"
+echo "Mode: ${CONVERT_MODE}"
+echo "============================================"
+
+# Create logs directory
+mkdir -p "${REPO_DIR}/logs"
 
 # ============================================================================
 # 1. Setup Python Environment
@@ -82,10 +119,26 @@ mkdir -p "${PROJECT_DIR}/logs"
 echo ""
 echo "[1/5] Setting up Python environment..."
 
-module load python/3.11 cuda/12.2 cudnn/9.2
+# Load modules - use saved modules file if available, otherwise use defaults
+if [ -f "${REPO_DIR}/slurm/.modules" ]; then
+    echo "Loading modules from ${REPO_DIR}/slurm/.modules..."
+    source "${REPO_DIR}/slurm/.modules"
+else
+    echo "Loading default modules..."
+    module load StdEnv/2023
+    module load python/3.11 cuda cudnn
+    module load opencv/4.8.1
+    module load scipy-stack
+fi
 
+echo ""
+echo "Loaded modules:"
+module list
+
+# Activate virtual environment
 if [ -d "${VENV_PATH}" ]; then
-    echo "Activating existing virtual environment..."
+    echo ""
+    echo "Activating virtual environment..."
     source "${VENV_PATH}/bin/activate"
 else
     echo "ERROR: Virtual environment not found at ${VENV_PATH}"
@@ -94,7 +147,7 @@ else
 fi
 
 # Verify key packages
-python -c "from ultralytics import YOLO; from pycocotools import mask; print('Dependencies OK')"
+python -c "from ultralytics import YOLO; from pycocotools import mask; import cv2; print('Dependencies OK')"
 
 # ============================================================================
 # 2. Extract Raw Data to SLURM_TMPDIR
@@ -149,7 +202,7 @@ echo "      Mode: ${CONVERT_MODE}, Top N: ${CONVERT_TOP_N}, Val ratio: ${VAL_RAT
 
 YOLO_DATASET="${SLURM_TMPDIR}/yolo_dataset"
 
-cd "${PROJECT_DIR}"
+cd "${REPO_DIR}"
 python scripts/convert_coco_to_yolo.py \
     --coco_json "${COCO_JSON}" \
     --output_dir "${YOLO_DATASET}" \
@@ -185,7 +238,7 @@ python scripts/train.py \
     --batch 16 \
     --imgsz 640 \
     --workers 8 \
-    --project "${PROJECT_DIR}/runs/segment" \
+    --project "${REPO_DIR}/runs/segment" \
     --name "drac_${SLURM_JOB_ID}" \
     "${TRAIN_ARGS[@]}"
 
@@ -196,7 +249,7 @@ echo ""
 echo "[5/5] Training complete!"
 echo ""
 
-RESULTS_DIR="${PROJECT_DIR}/runs/segment/drac_${SLURM_JOB_ID}"
+RESULTS_DIR="${REPO_DIR}/runs/segment/drac_${SLURM_JOB_ID}"
 if [ -d "${RESULTS_DIR}" ]; then
     echo "============================================"
     echo "Results saved to: ${RESULTS_DIR}"
