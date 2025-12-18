@@ -127,8 +127,8 @@ else
     echo "Loading default modules..."
     module load StdEnv/2023
     module load python/3.11 cuda cudnn
-    module load opencv/4.8.1
     module load scipy-stack
+    module load opencv/4.8.1
 fi
 
 echo ""

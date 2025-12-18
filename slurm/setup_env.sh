@@ -41,11 +41,11 @@ module load StdEnv/2023
 # Load Python and GPU support
 module load python/3.11 cuda cudnn
 
+# Load scipy-stack for optimized numpy, scipy (must come before opencv)
+module load scipy-stack
+
 # Load OpenCV via module (provides optimized opencv_python bindings)
 module load opencv/4.8.1
-
-# Load scipy-stack for optimized numpy, scipy, etc.
-module load scipy-stack
 
 echo ""
 echo "Loaded modules:"
