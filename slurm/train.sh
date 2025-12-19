@@ -5,8 +5,8 @@
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
 #SBATCH --job-name=yolo_seg
-#SBATCH --output=logs/%x-%j.out
-#SBATCH --error=logs/%x-%j.err
+#SBATCH --output=/home/%u/yolo_segmentation/logs/%x-%j.out
+#SBATCH --error=/home/%u/yolo_segmentation/logs/%x-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=spencer.bialek@gmail.com
 
