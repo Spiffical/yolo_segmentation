@@ -309,8 +309,18 @@ echo "[4/5] Starting training..."
 echo "Output will be saved to: ${OUTPUT_DIR}"
 
 # Configure Weights & Biases
+# Check for API key in environment or ~/.netrc (from 'wandb login')
+WANDB_ENABLED=false
 if [ -n "${WANDB_API_KEY}" ]; then
-    echo "W&B logging enabled (project: ${WANDB_PROJECT})"
+    WANDB_ENABLED=true
+    echo "W&B logging enabled via WANDB_API_KEY"
+elif grep -q "api.wandb.ai" ~/.netrc 2>/dev/null; then
+    WANDB_ENABLED=true
+    echo "W&B logging enabled via ~/.netrc (from 'wandb login')"
+fi
+
+if [ "${WANDB_ENABLED}" = true ]; then
+    echo "W&B project: ${WANDB_PROJECT}"
     
     # Set W&B run name if not provided
     if [ -z "${WANDB_RUN_NAME}" ]; then
@@ -322,8 +332,8 @@ if [ -n "${WANDB_API_KEY}" ]; then
     export WANDB_NAME="${WANDB_RUN_NAME}"
     export WANDB_DIR="${OUTPUT_DIR}"
 else
-    echo "W&B logging disabled (WANDB_API_KEY not set)"
-    echo "To enable: export WANDB_API_KEY=your_key before submitting"
+    echo "W&B logging disabled"
+    echo "To enable: run 'wandb login' or export WANDB_API_KEY=your_key"
 fi
 
 echo ""
