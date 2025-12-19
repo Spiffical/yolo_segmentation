@@ -86,7 +86,7 @@ pip install --no-index --upgrade pip
 # Check what wheels are available for our packages
 echo ""
 echo "Checking available wheels..."
-avail_wheels ultralytics pycocotools tqdm pyyaml || true
+avail_wheels ultralytics pycocotools tqdm pyyaml wandb || true
 
 # Install packages - prefer Alliance wheels (--no-index), fallback to PyPI
 echo ""
@@ -98,13 +98,16 @@ pip install --no-index pycocotools || pip install pycocotools
 pip install --no-index tqdm || pip install tqdm
 pip install --no-index pyyaml || pip install pyyaml
 
+# Weights & Biases for experiment tracking
+pip install --no-index wandb || pip install wandb
+
 # Note: OpenCV is already available from the opencv module
 # Note: numpy/scipy are from scipy-stack module
 
 # Show installed packages
 echo ""
 echo "Installed packages:"
-pip list | grep -iE "ultralytics|torch|opencv|pycocotools|numpy" || true
+pip list | grep -iE "ultralytics|torch|opencv|pycocotools|numpy|wandb" || true
 
 # ============================================================================
 # 4. Test Installation

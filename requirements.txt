@@ -22,3 +22,6 @@ opencv-python
 # NumPy - usually comes with torch/ultralytics
 # On DRAC: use 'module load scipy-stack' for optimized version
 numpy
+
+# Experiment tracking (optional but recommended)
+wandb

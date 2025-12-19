@@ -30,6 +30,14 @@
 #                                   yolo11l-seg.pt, yolo11x-seg.pt (default: yolo11m-seg.pt)
 #   --epochs N          Number of training epochs (default: 100)
 #   --batch N           Batch size (default: 16)
+#   --wandb-project P   W&B project name (default: yolo-segmentation)
+#   --wandb-name NAME   W&B run name (default: auto-generated)
+#
+# Weights & Biases:
+#   To enable W&B logging, set WANDB_API_KEY before submitting:
+#     export WANDB_API_KEY=your_api_key
+#     sbatch slurm/train.sh --mode binary
+#   Or add to ~/.bashrc for persistence.
 #
 # Output:
 #   Results saved to: $SCRATCH/yolo_seg/<date>/<mode>_<job_id>/
@@ -38,6 +46,7 @@
 # Before first run:
 #   1. Run: bash slurm/setup_env.sh
 #   2. Create data tarball: bash slurm/prepare_data.sh
+#   3. (Optional) Set up W&B: wandb login
 # ============================================================================
 
 set -e  # Exit on error
@@ -56,6 +65,10 @@ VAL_RATIO="0.2"
 MODEL="yolo11m-seg.pt"
 EPOCHS="100"
 BATCH="16"
+
+# Weights & Biases options
+WANDB_PROJECT="yolo-segmentation"
+WANDB_RUN_NAME=""  # Will be auto-generated if empty
 
 # Parse command line arguments
 TRAIN_ARGS=()
@@ -91,6 +104,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --batch)
             BATCH="$2"
+            shift 2
+            ;;
+        --wandb-project)
+            WANDB_PROJECT="$2"
+            shift 2
+            ;;
+        --wandb-name)
+            WANDB_RUN_NAME="$2"
             shift 2
             ;;
         *)
@@ -286,6 +307,25 @@ ls -la "${YOLO_DATASET}"
 echo ""
 echo "[4/5] Starting training..."
 echo "Output will be saved to: ${OUTPUT_DIR}"
+
+# Configure Weights & Biases
+if [ -n "${WANDB_API_KEY}" ]; then
+    echo "W&B logging enabled (project: ${WANDB_PROJECT})"
+    
+    # Set W&B run name if not provided
+    if [ -z "${WANDB_RUN_NAME}" ]; then
+        WANDB_RUN_NAME="${CONVERT_MODE}_${MODEL%.pt}_${SLURM_JOB_ID}"
+    fi
+    
+    # Export W&B environment variables for ultralytics
+    export WANDB_PROJECT="${WANDB_PROJECT}"
+    export WANDB_NAME="${WANDB_RUN_NAME}"
+    export WANDB_DIR="${OUTPUT_DIR}"
+else
+    echo "W&B logging disabled (WANDB_API_KEY not set)"
+    echo "To enable: export WANDB_API_KEY=your_key before submitting"
+fi
+
 echo ""
 
 DATASET_CONFIG="${YOLO_DATASET}/dataset.yaml"
