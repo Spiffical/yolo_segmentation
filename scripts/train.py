@@ -222,11 +222,43 @@ def main():
         model = YOLO(args.model)
     
     # Setup logging
-    loggers = []
-    if args.tensorboard:
-        loggers.append('tensorboard')
-    if args.wandb:
-        loggers.append('wandb')
+    # Configure W&B if requested or if WANDB env vars are set
+    use_wandb = args.wandb or os.environ.get('WANDB_PROJECT') is not None
+    
+    if use_wandb:
+        try:
+            import wandb
+            from ultralytics import settings
+            
+            # Enable W&B in ultralytics settings
+            settings.update({'wandb': True})
+            
+            # Get project/run name from env or defaults
+            wandb_project = os.environ.get('WANDB_PROJECT', 'yolo-segmentation')
+            wandb_name = os.environ.get('WANDB_NAME', args.name)
+            
+            print(f"W&B logging enabled: project={wandb_project}, run={wandb_name}")
+            
+            # Initialize wandb if not already done
+            if wandb.run is None:
+                wandb.init(
+                    project=wandb_project,
+                    name=wandb_name,
+                    config={
+                        'model': args.model,
+                        'epochs': args.epochs,
+                        'batch': args.batch,
+                        'imgsz': args.imgsz,
+                        'lr0': args.lr0,
+                        'optimizer': args.optimizer,
+                    }
+                )
+        except ImportError:
+            print("W&B requested but wandb not installed. Skipping.")
+            use_wandb = False
+        except Exception as e:
+            print(f"W&B initialization failed: {e}")
+            use_wandb = False
     
     # Train
     results = model.train(

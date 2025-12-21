@@ -165,6 +165,7 @@ def process_image(
     label_path = output_dir / label_name
     
     lines = []
+    seen_polygons = set()  # Track seen polygons to avoid duplicates
     total_polygons = 0
     
     for ann in annotations:
@@ -190,8 +191,16 @@ def process_image(
                 if len(polygon) >= 3:
                     coords = polygon_to_yolo_format(polygon, img_width, img_height)
                     coord_str = ' '.join(f'{c:.6f}' for c in coords)
-                    lines.append(f'{class_idx} {coord_str}')
-                    total_polygons += 1
+                    line = f'{class_idx} {coord_str}'
+                    
+                    # Create a signature for deduplication (rounded coords)
+                    # Round to 4 decimal places for comparison to catch near-duplicates
+                    sig = (class_idx, tuple(round(c, 4) for c in coords))
+                    
+                    if sig not in seen_polygons:
+                        seen_polygons.add(sig)
+                        lines.append(line)
+                        total_polygons += 1
                     
         except Exception as e:
             # Skip problematic annotations
