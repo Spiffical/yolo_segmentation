@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --account=def-kmoran
-#SBATCH --gpus-per-node=1
+#SBATCH --gpus-per-node=h100:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=64000M
 #SBATCH --time=24:00:00
 #SBATCH --job-name=yolo_seg
 #SBATCH --output=/home/%u/yolo_segmentation/logs/%x-%j.out
@@ -159,6 +159,15 @@ echo "Mode: ${CONVERT_MODE} (top_n=${CONVERT_TOP_N})"
 echo "Model: ${MODEL}"
 echo "Epochs: ${EPOCHS}, Batch: ${BATCH}"
 echo "Output: ${OUTPUT_DIR}"
+echo "============================================"
+
+# GPU diagnostics
+echo ""
+echo "GPU Information:"
+nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv 2>/dev/null || echo "nvidia-smi not available"
+echo ""
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
+echo "SLURM_JOB_GPUS: ${SLURM_JOB_GPUS:-not set}"
 echo "============================================"
 
 # Create directories
@@ -340,13 +349,16 @@ echo ""
 
 DATASET_CONFIG="${YOLO_DATASET}/dataset.yaml"
 
+# Use available CPUs for workers (respects SLURM allocation)
+NUM_WORKERS=${SLURM_CPUS_PER_TASK:-8}
+
 python scripts/train.py \
     --data "${DATASET_CONFIG}" \
     --model "${MODEL}" \
     --epochs "${EPOCHS}" \
     --batch "${BATCH}" \
     --imgsz 640 \
-    --workers 8 \
+    --workers "${NUM_WORKERS}" \
     --project "${OUTPUT_DIR}" \
     --name "train" \
     "${TRAIN_ARGS[@]}"
