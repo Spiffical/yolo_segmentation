@@ -236,14 +236,23 @@ def main():
             # Get project/run name from env or defaults
             wandb_project = os.environ.get('WANDB_PROJECT', 'yolo-segmentation')
             wandb_name = os.environ.get('WANDB_NAME', args.name)
+            wandb_group = os.environ.get('WANDB_GROUP')
+            wandb_tags_raw = os.environ.get('WANDB_TAGS', '')
+            wandb_tags = [t.strip() for t in wandb_tags_raw.split(',') if t.strip()]
             
             print(f"W&B logging enabled: project={wandb_project}, run={wandb_name}")
+            if wandb_group:
+                print(f"W&B group: {wandb_group}")
+            if wandb_tags:
+                print(f"W&B tags: {wandb_tags}")
             
             # Initialize wandb if not already done
             if wandb.run is None:
                 wandb.init(
                     project=wandb_project,
                     name=wandb_name,
+                    group=wandb_group,
+                    tags=wandb_tags,
                     config={
                         'model': args.model,
                         'epochs': args.epochs,

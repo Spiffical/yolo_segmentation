@@ -9,6 +9,9 @@ This repository contains tools for training YOLOv11 instance segmentation models
 - **Automatic train/val splitting** with stratification
 - **Local training scripts** with full CLI control
 - **DRAC cluster support** with SLURM submission scripts
+- **Sweep submission with reproducible manifests**
+- **Single-file benchmark reports across many checkpoints**
+- **Local video inference with per-video summary CSV**
 
 ## Quick Start
 
@@ -71,9 +74,13 @@ yolo_segmentation/
 │   ├── convert_coco_to_yolo.py  # Data conversion
 │   ├── train.py                  # Training
 │   ├── validate.py               # Visualization
+│   ├── submit_sweep.py           # Sweep submission helper
+│   ├── benchmark_models.py       # Checkpoint benchmarking report
+│   ├── predict_videos.py         # Local video inference
 │   └── prepare_subset.py         # Create test subsets
 ├── slurm/                # Cluster submission scripts
 │   ├── train.sh          # SLURM job script
+│   ├── evaluate_models.sh # Evaluate many checkpoints + report
 │   ├── setup_env.sh      # Environment setup
 │   └── prepare_data.sh   # Data tarball creation
 ├── src/                  # Shared utilities
@@ -131,6 +138,62 @@ The job will:
 2. Convert COCO RLE → YOLO polygons
 3. Train YOLOv11 segmentation
 4. Save results to `runs/segment/`
+
+`slurm/train.sh` automatically enables multi-GPU DDP when more than one GPU is
+allocated (for example, `sbatch --gpus-per-node=4 ...`).
+
+## Sweep Workflow (Nibi + W&B)
+
+Use the example sweep config:
+
+```bash
+python scripts/submit_sweep.py \
+    --config configs/nibi_sweep_binary.yaml
+```
+
+This dry-run writes commands and a manifest under `runs/sweeps/...`.
+
+To actually submit:
+
+```bash
+python scripts/submit_sweep.py \
+    --config configs/nibi_sweep_binary.yaml \
+    --submit
+```
+
+Each run gets a deterministic W&B name/group and a saved command manifest for
+later traceability.
+
+## Benchmark All Checkpoints Into One Report
+
+After training finishes, run one evaluation job that benchmarks all discovered
+`weights/best.pt` checkpoints and writes ranked report files:
+
+```bash
+sbatch slurm/evaluate_models.sh \
+    --checkpoints-root /scratch/$USER/yolo_seg/2026-02-13 \
+    --data /project/def-kmoran/merileo/yolo_segmentation/data/mbari_raw.tar.gz \
+    --mode binary \
+    --split val
+```
+
+Outputs:
+- `benchmark_report.md` (human-readable ranking)
+- `benchmark_report.csv` (analysis-friendly table)
+- `benchmark_report.json` (machine-readable summary + metrics)
+
+## Run Best Model On Local ONC Videos
+
+```bash
+python scripts/predict_videos.py \
+    --model /path/to/best.pt \
+    --source /path/to/onc/videos \
+    --recursive \
+    --project runs/predict \
+    --name onc_validation
+```
+
+Outputs include annotated videos and `inference_summary.csv`.
 
 ## Category Modes
 

@@ -26,12 +26,15 @@
 #   --mode MODE         Conversion mode: binary, top_n, all (default: top_n)
 #   --top_n N           Number of top categories for top_n mode (default: 100)
 #   --val_ratio R       Validation split ratio (default: 0.2)
+#   --split-seed S      Random seed used when creating train/val split (default: 42)
 #   --model MODEL       YOLO model: yolo11n-seg.pt, yolo11s-seg.pt, yolo11m-seg.pt,
 #                                   yolo11l-seg.pt, yolo11x-seg.pt (default: yolo11m-seg.pt)
 #   --epochs N          Number of training epochs (default: 100)
 #   --batch N           Batch size (default: 16)
 #   --wandb-project P   W&B project name (default: yolo-segmentation)
 #   --wandb-name NAME   W&B run name (default: auto-generated)
+#   --wandb-group G     W&B group name for related runs (default: unset)
+#   --wandb-tags TAGS   Comma-separated W&B tags (default: unset)
 #
 # Weights & Biases:
 #   To enable W&B logging, set WANDB_API_KEY before submitting:
@@ -60,6 +63,7 @@ DATA_TARBALL=""
 CONVERT_MODE="top_n"
 CONVERT_TOP_N="100"
 VAL_RATIO="0.2"
+SPLIT_SEED="42"
 
 # Default training options
 MODEL="yolo11m-seg.pt"
@@ -69,6 +73,8 @@ BATCH="16"
 # Weights & Biases options
 WANDB_PROJECT="yolo-segmentation"
 WANDB_RUN_NAME=""  # Will be auto-generated if empty
+WANDB_GROUP=""
+WANDB_TAGS=""
 
 # Parse command line arguments
 TRAIN_ARGS=()
@@ -86,12 +92,16 @@ while [[ $# -gt 0 ]]; do
             CONVERT_MODE="$2"
             shift 2
             ;;
-        --top_n)
+        --top_n|--top-n)
             CONVERT_TOP_N="$2"
             shift 2
             ;;
-        --val_ratio)
+        --val_ratio|--val-ratio)
             VAL_RATIO="$2"
+            shift 2
+            ;;
+        --split-seed)
+            SPLIT_SEED="$2"
             shift 2
             ;;
         --model)
@@ -112,6 +122,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --wandb-name)
             WANDB_RUN_NAME="$2"
+            shift 2
+            ;;
+        --wandb-group)
+            WANDB_GROUP="$2"
+            shift 2
+            ;;
+        --wandb-tags)
+            WANDB_TAGS="$2"
             shift 2
             ;;
         *)
@@ -190,6 +208,7 @@ output_dir: ${OUTPUT_DIR}
 mode: ${CONVERT_MODE}
 top_n: ${CONVERT_TOP_N}
 val_ratio: ${VAL_RATIO}
+split_seed: ${SPLIT_SEED}
 
 # Training
 model: ${MODEL}
@@ -197,6 +216,12 @@ epochs: ${EPOCHS}
 batch: ${BATCH}
 imgsz: 640
 extra_args: "${TRAIN_ARGS[*]}"
+
+# W&B
+wandb_project: ${WANDB_PROJECT}
+wandb_run_name: ${WANDB_RUN_NAME}
+wandb_group: ${WANDB_GROUP}
+wandb_tags: ${WANDB_TAGS}
 EOF
 
 echo "Run config saved to: ${OUTPUT_DIR}/run_config.yaml"
@@ -296,6 +321,7 @@ python scripts/convert_coco_to_yolo.py \
     --output_dir "${YOLO_DATASET}" \
     --image_dir "${IMAGE_DIR}" \
     --val_ratio "${VAL_RATIO}" \
+    --seed "${SPLIT_SEED}" \
     --mode "${CONVERT_MODE}" \
     --top_n "${CONVERT_TOP_N}" \
     --min_annotations 0 \
@@ -340,6 +366,14 @@ if [ "${WANDB_ENABLED}" = true ]; then
     export WANDB_PROJECT="${WANDB_PROJECT}"
     export WANDB_NAME="${WANDB_RUN_NAME}"
     export WANDB_DIR="${OUTPUT_DIR}"
+    if [ -n "${WANDB_GROUP}" ]; then
+        export WANDB_GROUP="${WANDB_GROUP}"
+        echo "W&B group: ${WANDB_GROUP}"
+    fi
+    if [ -n "${WANDB_TAGS}" ]; then
+        export WANDB_TAGS="${WANDB_TAGS}"
+        echo "W&B tags: ${WANDB_TAGS}"
+    fi
 else
     echo "W&B logging disabled"
     echo "To enable: run 'wandb login' or export WANDB_API_KEY=your_key"
@@ -352,12 +386,33 @@ DATASET_CONFIG="${YOLO_DATASET}/dataset.yaml"
 # Use available CPUs for workers (respects SLURM allocation)
 NUM_WORKERS=${SLURM_CPUS_PER_TASK:-8}
 
+# Determine Ultralytics device argument from allocated GPUs.
+# If multiple GPUs are visible, pass "0,1,2,..." so Ultralytics launches DDP.
+if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    IFS=',' read -ra _GPU_IDS <<< "${CUDA_VISIBLE_DEVICES}"
+    GPU_COUNT=${#_GPU_IDS[@]}
+elif [ -n "${SLURM_GPUS_ON_NODE:-}" ] && [[ "${SLURM_GPUS_ON_NODE}" =~ ^[0-9]+$ ]]; then
+    GPU_COUNT="${SLURM_GPUS_ON_NODE}"
+elif [ -n "${SLURM_GPUS_PER_NODE:-}" ] && [[ "${SLURM_GPUS_PER_NODE}" =~ ([0-9]+)$ ]]; then
+    GPU_COUNT="${BASH_REMATCH[1]}"
+else
+    GPU_COUNT=0
+fi
+
+if [ "${GPU_COUNT}" -gt 1 ]; then
+    DEVICE_ARG=$(seq -s, 0 $((GPU_COUNT - 1)))
+else
+    DEVICE_ARG="auto"
+fi
+echo "Training device argument: ${DEVICE_ARG} (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset})"
+
 python scripts/train.py \
     --data "${DATASET_CONFIG}" \
     --model "${MODEL}" \
     --epochs "${EPOCHS}" \
     --batch "${BATCH}" \
     --imgsz 640 \
+    --device "${DEVICE_ARG}" \
     --workers "${NUM_WORKERS}" \
     --project "${OUTPUT_DIR}" \
     --name "train" \
