@@ -32,6 +32,7 @@ set -euo pipefail
 
 DEFAULT_REPO="${HOME}/yolo_segmentation"
 REPO_DIR=""
+VENV_PATH=""
 CHECKPOINTS_ROOT=""
 DATASET_YAML=""
 DATA_TARBALL=""
@@ -56,6 +57,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --checkpoints-root)
             CHECKPOINTS_ROOT="$2"
+            shift 2
+            ;;
+        --venv)
+            VENV_PATH="$2"
             shift 2
             ;;
         --dataset-yaml)
@@ -137,6 +142,19 @@ if [ -z "${CHECKPOINTS_ROOT}" ]; then
     exit 1
 fi
 
+if [ -z "${VENV_PATH}" ]; then
+    for candidate in \
+        "${REPO_DIR}/.venv" \
+        "${DEFAULT_REPO}/.venv" \
+        "${HOME}/.venv"
+    do
+        if [ -d "${candidate}" ]; then
+            VENV_PATH="${candidate}"
+            break
+        fi
+    done
+fi
+
 OUTPUT_BASE="${SCRATCH}/yolo_seg_eval"
 RUN_DATE=$(date +%Y-%m-%d)
 RUN_NAME="eval_${SLURM_JOB_ID}"
@@ -152,6 +170,7 @@ echo "Repo: ${REPO_DIR}"
 echo "Checkpoints root: ${CHECKPOINTS_ROOT}"
 echo "Dataset YAML: ${DATASET_YAML:-<generated from raw data>}"
 echo "Data tarball: ${DATA_TARBALL:-<not provided>}"
+echo "Venv: ${VENV_PATH:-not set}"
 echo "Output: ${OUTPUT_DIR}"
 echo "============================================"
 
@@ -160,6 +179,7 @@ job_id: ${SLURM_JOB_ID}
 node: ${SLURM_NODELIST}
 date: $(date -Iseconds)
 repo_dir: ${REPO_DIR}
+venv_path: ${VENV_PATH}
 checkpoints_root: ${CHECKPOINTS_ROOT}
 dataset_yaml: ${DATASET_YAML}
 data_tarball: ${DATA_TARBALL}
@@ -187,10 +207,11 @@ else
     module load opencv/4.12.0
 fi
 
-if [ -d "${REPO_DIR}/.venv" ]; then
-    source "${REPO_DIR}/.venv/bin/activate"
+if [ -d "${VENV_PATH}" ]; then
+    source "${VENV_PATH}/bin/activate"
 else
-    echo "ERROR: Missing venv at ${REPO_DIR}/.venv"
+    echo "ERROR: Missing venv at ${VENV_PATH:-<empty>}"
+    echo "Provide --venv /path/to/.venv"
     exit 1
 fi
 

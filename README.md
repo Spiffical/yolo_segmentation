@@ -131,6 +131,12 @@ sbatch slurm/train.sh --mode top_n --top_n 100
 
 # All categories (1897 classes)
 sbatch slurm/train.sh --mode all
+
+# If code is on /project but venv is under /home:
+sbatch slurm/train.sh \
+    --repo /project/def-kmoran/<user>/yolo_segmentation \
+    --venv /home/<user>/yolo_segmentation/.venv \
+    --mode binary
 ```
 
 The job will:

@@ -22,6 +22,7 @@
 #
 # Arguments:
 #   --repo DIR          Path to yolo_segmentation repo (default: ~/yolo_segmentation)
+#   --venv DIR          Path to Python virtual environment (default: auto-detect)
 #   --data FILE         Path to data tarball (default: REPO/data/mbari_raw.tar.gz)
 #   --mode MODE         Conversion mode: binary, top_n, all (default: top_n)
 #   --top_n N           Number of top categories for top_n mode (default: 100)
@@ -57,6 +58,7 @@ set -e  # Exit on error
 # Default paths (adjust for your DRAC setup)
 DEFAULT_REPO="${HOME}/yolo_segmentation"
 REPO_DIR=""
+VENV_PATH=""
 DATA_TARBALL=""
 
 # Default conversion options
@@ -86,6 +88,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --data)
             DATA_TARBALL="$2"
+            shift 2
+            ;;
+        --venv)
+            VENV_PATH="$2"
             shift 2
             ;;
         --mode)
@@ -156,7 +162,18 @@ if [ -z "${DATA_TARBALL}" ]; then
     DATA_TARBALL="${REPO_DIR}/data/mbari_raw.tar.gz"
 fi
 
-VENV_PATH="${REPO_DIR}/.venv"
+if [ -z "${VENV_PATH}" ]; then
+    for candidate in \
+        "${REPO_DIR}/.venv" \
+        "${DEFAULT_REPO}/.venv" \
+        "${HOME}/.venv"
+    do
+        if [ -d "${candidate}" ]; then
+            VENV_PATH="${candidate}"
+            break
+        fi
+    done
+fi
 
 # Output directory - use $SCRATCH for large training outputs
 # Organized as: $SCRATCH/yolo_seg/<date>/<mode>_<job_id>/
@@ -176,6 +193,7 @@ echo "Data: ${DATA_TARBALL}"
 echo "Mode: ${CONVERT_MODE} (top_n=${CONVERT_TOP_N})"
 echo "Model: ${MODEL}"
 echo "Epochs: ${EPOCHS}, Batch: ${BATCH}"
+echo "Venv: ${VENV_PATH:-not set}"
 echo "Output: ${OUTPUT_DIR}"
 echo "============================================"
 
@@ -201,6 +219,7 @@ date: $(date -Iseconds)
 
 # Paths
 repo_dir: ${REPO_DIR}
+venv_path: ${VENV_PATH}
 data_tarball: ${DATA_TARBALL}
 output_dir: ${OUTPUT_DIR}
 
@@ -254,8 +273,9 @@ if [ -d "${VENV_PATH}" ]; then
     echo "Activating virtual environment..."
     source "${VENV_PATH}/bin/activate"
 else
-    echo "ERROR: Virtual environment not found at ${VENV_PATH}"
-    echo "Run 'bash slurm/setup_env.sh' first to create it."
+    echo "ERROR: Virtual environment not found."
+    echo "Requested path: ${VENV_PATH:-<empty>}"
+    echo "Provide --venv /path/to/.venv or run 'bash slurm/setup_env.sh'."
     exit 1
 fi
 

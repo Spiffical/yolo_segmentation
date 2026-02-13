@@ -21,6 +21,7 @@ import yaml
 
 SBATCH_KEYS = [
     "repo",
+    "venv",
     "data",
     "mode",
     "top_n",
@@ -37,6 +38,7 @@ SBATCH_KEYS = [
 
 SBATCH_FLAG_MAP = {
     "repo": "--repo",
+    "venv": "--venv",
     "data": "--data",
     "mode": "--mode",
     "top_n": "--top_n",

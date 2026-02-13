@@ -4,6 +4,7 @@
 
 global:
   repo: /project/def-kmoran/merileo/yolo_segmentation
+  venv: /home/merileo/yolo_segmentation/.venv
   data: /project/def-kmoran/merileo/yolo_segmentation/data/mbari_raw.tar.gz
   mode: binary
   top_n: 100
