@@ -406,11 +406,11 @@ DATASET_CONFIG="${YOLO_DATASET}/dataset.yaml"
 # Use available CPUs for workers (respects SLURM allocation)
 NUM_WORKERS=${SLURM_CPUS_PER_TASK:-8}
 
-# Determine Ultralytics device argument from allocated GPUs.
-# If multiple GPUs are visible, pass "0,1,2,..." so Ultralytics launches DDP.
-if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
-    IFS=',' read -ra _GPU_IDS <<< "${CUDA_VISIBLE_DEVICES}"
-    GPU_COUNT=${#_GPU_IDS[@]}
+# Determine Ultralytics device argument from what PyTorch can actually see.
+# On MIG systems, CUDA_VISIBLE_DEVICES may list more UUIDs than torch exposes.
+TORCH_GPU_COUNT=$(python -c "import torch; print(torch.cuda.device_count() if torch.cuda.is_available() else 0)" 2>/dev/null || echo "")
+if [[ "${TORCH_GPU_COUNT}" =~ ^[0-9]+$ ]]; then
+    GPU_COUNT="${TORCH_GPU_COUNT}"
 elif [ -n "${SLURM_GPUS_ON_NODE:-}" ] && [[ "${SLURM_GPUS_ON_NODE}" =~ ^[0-9]+$ ]]; then
     GPU_COUNT="${SLURM_GPUS_ON_NODE}"
 elif [ -n "${SLURM_GPUS_PER_NODE:-}" ] && [[ "${SLURM_GPUS_PER_NODE}" =~ ([0-9]+)$ ]]; then
@@ -421,10 +421,12 @@ fi
 
 if [ "${GPU_COUNT}" -gt 1 ]; then
     DEVICE_ARG=$(seq -s, 0 $((GPU_COUNT - 1)))
+elif [ "${GPU_COUNT}" -eq 1 ]; then
+    DEVICE_ARG="0"
 else
     DEVICE_ARG="auto"
 fi
-echo "Training device argument: ${DEVICE_ARG} (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset})"
+echo "Training device argument: ${DEVICE_ARG} (torch cuda count=${GPU_COUNT}, CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset})"
 
 python scripts/train.py \
     --data "${DATASET_CONFIG}" \
