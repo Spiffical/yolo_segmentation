@@ -126,17 +126,17 @@ def main():
         help='Optimizer'
     )
     
-    # Augmentation arguments
+    # Validation-time augmentation arguments
     parser.add_argument(
         '--augment',
         action='store_true',
-        default=True,
-        help='Enable data augmentation'
+        default=False,
+        help='Enable test-time augmentation (TTA) during validation/prediction'
     )
     parser.add_argument(
         '--no-augment',
         action='store_true',
-        help='Disable data augmentation'
+        help='Disable validation/prediction TTA (default)'
     )
     
     # Logging arguments
@@ -179,8 +179,9 @@ def main():
     
     args = parser.parse_args()
     
-    # Handle augmentation flag
-    augment = args.augment and not args.no_augment
+    # Handle validation-time TTA flag.
+    # Training augmentation is controlled by Ultralytics hypers, not this flag.
+    val_augment = args.augment and not args.no_augment
     
     # Auto-detect device
     if args.device == 'auto':
@@ -203,6 +204,7 @@ def main():
     print(f"Epochs: {args.epochs}")
     print(f"Batch size: {args.batch}")
     print(f"Image size: {args.imgsz}")
+    print(f"Validation TTA: {val_augment}")
     print(f"Output: {args.project}/{args.name}")
     print("="*60)
     
@@ -222,15 +224,17 @@ def main():
         model = YOLO(args.model)
     
     # Setup logging
-    # Configure W&B if requested or if WANDB env vars are set
+    # Configure explicit W&B run metadata if requested or if WANDB env vars are set.
+    # We keep Ultralytics' W&B callback enabled so validation curves/plots are logged.
     use_wandb = args.wandb or os.environ.get('WANDB_PROJECT') is not None
+    wandb = None
+    settings = None
     
     if use_wandb:
         try:
             import wandb
             from ultralytics import settings
-            
-            # Enable W&B in ultralytics settings
+
             settings.update({'wandb': True})
             
             # Get project/run name from env or defaults
@@ -246,7 +250,8 @@ def main():
             if wandb_tags:
                 print(f"W&B tags: {wandb_tags}")
             
-            # Initialize wandb if not already done
+            # Pre-initialize run so Ultralytics callbacks reuse this metadata
+            # instead of inferring project from output filesystem path.
             if wandb.run is None:
                 wandb.init(
                     project=wandb_project,
@@ -265,9 +270,25 @@ def main():
         except ImportError:
             print("W&B requested but wandb not installed. Skipping.")
             use_wandb = False
+            try:
+                from ultralytics import settings
+                settings.update({'wandb': False})
+            except Exception:
+                pass
         except Exception as e:
             print(f"W&B initialization failed: {e}")
             use_wandb = False
+            try:
+                if settings is not None:
+                    settings.update({'wandb': False})
+            except Exception:
+                pass
+    else:
+        try:
+            from ultralytics import settings
+            settings.update({'wandb': False})
+        except Exception:
+            pass
     
     # Train
     results = model.train(
@@ -288,7 +309,9 @@ def main():
         save_period=args.save_period,
         seed=args.seed,
         verbose=args.verbose,
-        augment=augment,
+        augment=val_augment,
+        val=True,
+        plots=True,
     )
     
     print("\n" + "="*60)

@@ -399,6 +399,12 @@ else
     echo "To enable: run 'wandb login' or export WANDB_API_KEY=your_key"
 fi
 
+TRAIN_RUN_DIR="train"
+if [ "${WANDB_ENABLED}" = true ] && [ -n "${WANDB_RUN_NAME}" ]; then
+    TRAIN_RUN_DIR="${WANDB_RUN_NAME}"
+fi
+echo "Training run directory: ${TRAIN_RUN_DIR}"
+
 echo ""
 
 DATASET_CONFIG="${YOLO_DATASET}/dataset.yaml"
@@ -428,6 +434,17 @@ else
 fi
 echo "Training device argument: ${DEVICE_ARG} (torch cuda count=${GPU_COUNT}, CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset})"
 
+# Scale dataloader workers per training process for DDP.
+# Ultralytics interprets --workers per process, so total workers ~= workers * GPU_COUNT.
+TRAIN_WORKERS="${NUM_WORKERS}"
+if [ "${GPU_COUNT}" -gt 1 ]; then
+    TRAIN_WORKERS=$(( NUM_WORKERS / GPU_COUNT ))
+    if [ "${TRAIN_WORKERS}" -lt 1 ]; then
+        TRAIN_WORKERS=1
+    fi
+fi
+echo "Dataloader workers: per-process=${TRAIN_WORKERS}, approx-total=$(( TRAIN_WORKERS * (GPU_COUNT > 0 ? GPU_COUNT : 1) ))"
+
 python scripts/train.py \
     --data "${DATASET_CONFIG}" \
     --model "${MODEL}" \
@@ -435,9 +452,9 @@ python scripts/train.py \
     --batch "${BATCH}" \
     --imgsz 640 \
     --device "${DEVICE_ARG}" \
-    --workers "${NUM_WORKERS}" \
+    --workers "${TRAIN_WORKERS}" \
     --project "${OUTPUT_DIR}" \
-    --name "train" \
+    --name "${TRAIN_RUN_DIR}" \
     "${TRAIN_ARGS[@]}"
 
 # ============================================================================
@@ -447,7 +464,7 @@ echo ""
 echo "[5/5] Training complete!"
 echo ""
 
-RESULTS_DIR="${OUTPUT_DIR}/train"
+RESULTS_DIR="${OUTPUT_DIR}/${TRAIN_RUN_DIR}"
 if [ -d "${RESULTS_DIR}" ]; then
     echo "============================================"
     echo "Results saved to: ${RESULTS_DIR}"
@@ -457,7 +474,7 @@ if [ -d "${RESULTS_DIR}" ]; then
     echo "  ${OUTPUT_BASE}/"
     echo "  └── ${RUN_DATE}/"
     echo "      └── ${RUN_NAME}/"
-    echo "          └── train/"
+    echo "          └── ${TRAIN_RUN_DIR}/"
     echo "              ├── weights/best.pt"
     echo "              ├── weights/last.pt"
     echo "              └── results.csv"
