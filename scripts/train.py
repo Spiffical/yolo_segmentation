@@ -8,6 +8,7 @@ for both local development and cluster deployment.
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -166,6 +167,25 @@ def main():
         help='Save checkpoint every N epochs'
     )
     parser.add_argument(
+        '--snapshot-best-confusion',
+        dest='snapshot_best_confusion',
+        action='store_true',
+        default=True,
+        help='Generate confusion matrix snapshots only when best.pt is updated'
+    )
+    parser.add_argument(
+        '--no-snapshot-best-confusion',
+        dest='snapshot_best_confusion',
+        action='store_false',
+        help='Disable best.pt confusion matrix snapshots'
+    )
+    parser.add_argument(
+        '--best-confusion-split',
+        type=str,
+        default='val',
+        help='Dataset split to use for best.pt confusion matrix snapshots'
+    )
+    parser.add_argument(
         '--seed',
         type=int,
         default=42,
@@ -222,6 +242,78 @@ def main():
     else:
         print(f"\nLoading base model: {args.model}")
         model = YOLO(args.model)
+
+    if args.snapshot_best_confusion:
+        best_state = {'signature': None}
+
+        def snapshot_best_confusion(trainer):
+            best_path = Path(trainer.best)
+            if not best_path.exists():
+                return
+
+            best_stat = best_path.stat()
+            signature = (best_stat.st_mtime_ns, best_stat.st_size)
+            if signature == best_state['signature']:
+                return
+            best_state['signature'] = signature
+
+            epoch_num = int(getattr(trainer, 'epoch', -1)) + 1
+            print(
+                f"[best-snapshot] best.pt updated at epoch {epoch_num}; "
+                f"generating confusion matrices for split='{args.best_confusion_split}'."
+            )
+
+            prev_plots = bool(getattr(trainer.validator.args, 'plots', False))
+            prev_split = getattr(trainer.validator.args, 'split', 'val')
+            prev_possible_stop = bool(getattr(trainer.stopper, 'possible_stop', False))
+            prev_metrics = trainer.metrics
+            prev_fitness = trainer.fitness
+
+            validation_ok = False
+            try:
+                # Ultralytics suppresses per-epoch plotting unless early-stop is near.
+                # Force plotting for this best-checkpoint snapshot validation only.
+                trainer.stopper.possible_stop = True
+                trainer.validator.args.plots = True
+                trainer.validator.args.split = args.best_confusion_split
+                trainer.metrics, trainer.fitness = trainer.validate()
+                validation_ok = True
+            except Exception as e:
+                print(f"[best-snapshot] WARNING: failed to generate confusion matrices: {e}")
+            finally:
+                trainer.validator.args.plots = prev_plots
+                trainer.validator.args.split = prev_split
+                trainer.stopper.possible_stop = prev_possible_stop
+                trainer.metrics = prev_metrics
+                trainer.fitness = prev_fitness
+
+            if not validation_ok:
+                return
+
+            snapshot_dir = Path(trainer.save_dir) / 'best_snapshots' / f'epoch_{epoch_num:04d}'
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+            copied = []
+            for filename in ('confusion_matrix.png', 'confusion_matrix_normalized.png'):
+                src = Path(trainer.save_dir) / filename
+                if src.exists():
+                    dst = snapshot_dir / filename
+                    shutil.copy2(src, dst)
+                    copied.append(str(dst))
+
+            shutil.copy2(best_path, snapshot_dir / 'best.pt')
+
+            if copied:
+                print("[best-snapshot] saved:")
+                for path in copied:
+                    print(f"  - {path}")
+            else:
+                print("[best-snapshot] WARNING: confusion matrix files were not found after validation.")
+
+        model.add_callback('on_model_save', snapshot_best_confusion)
+        print(f"Best-checkpoint confusion snapshots: enabled (split={args.best_confusion_split})")
+    else:
+        print("Best-checkpoint confusion snapshots: disabled")
     
     # Setup logging
     # Configure explicit W&B run metadata if requested or if WANDB env vars are set.

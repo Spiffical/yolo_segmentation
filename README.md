@@ -146,7 +146,7 @@ The job will:
 4. Save results to `runs/segment/`
 
 `slurm/train.sh` automatically enables multi-GPU DDP when more than one GPU is
-allocated (for example, `sbatch --gpus-per-node=4 ...`).
+allocated (for example, `sbatch --gpus-per-node=h100:4 ...`).
 
 ## Sweep Workflow (Nibi + W&B)
 
@@ -155,6 +155,26 @@ Use the example sweep config:
 ```bash
 python scripts/submit_sweep.py \
     --config configs/nibi_sweep_binary.yaml
+```
+
+For a FathomNet-like training regime (`imgsz=640`, `optimizer=auto`,
+`patience=5`, `lr0=0.01`, `batch=16`), use:
+
+```bash
+python scripts/submit_sweep.py \
+    --config configs/nibi_sweep_binary_fathomnet_like.yaml
+```
+
+For multiclass experiments:
+
+```bash
+# Top-N multiclass (recommended first)
+python scripts/submit_sweep.py \
+    --config configs/nibi_sweep_multiclass_topn.yaml
+
+# Full multiclass (all classes)
+python scripts/submit_sweep.py \
+    --config configs/nibi_sweep_multiclass_all.yaml
 ```
 
 This dry-run writes commands and a manifest under `runs/sweeps/...`.
@@ -180,6 +200,7 @@ sbatch slurm/evaluate_models.sh \
     --checkpoints-root /scratch/$USER/yolo_seg/2026-02-13 \
     --data /project/def-kmoran/merileo/yolo_segmentation/data/mbari_raw.tar.gz \
     --mode binary \
+    --splits val,test \
     --split val
 ```
 
@@ -187,6 +208,23 @@ Outputs:
 - `benchmark_report.md` (human-readable ranking)
 - `benchmark_report.csv` (analysis-friendly table)
 - `benchmark_report.json` (machine-readable summary + metrics)
+- `eval_runs/.../confusion_matrix.png` for each model/split
+- `eval_runs/.../confusion_matrix_normalized.png` for each model/split
+- `train_results_plot` paths in report rows (points to each run's `results.png`)
+
+## Profile Labels
+
+Inspect class distribution from the COCO JSON before choosing multiclass settings:
+
+```bash
+python scripts/profile_labels.py \
+    --coco-json data/seg_masks/train.json \
+    --output-dir runs/label_profile
+```
+
+Outputs:
+- `runs/label_profile/label_profile.md`
+- `runs/label_profile/category_counts.csv`
 
 ## Run Best Model On Local ONC Videos
 

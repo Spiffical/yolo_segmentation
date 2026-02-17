@@ -1,0 +1,53 @@
+# FathomNet-like binary sweep for MBARI data.
+# Mirrors key training choices from:
+# https://huggingface.co/FathomNet/2025-MBARI-Midwater-Supercategory-Object-Detector
+#
+# Usage:
+#   python3 scripts/submit_sweep.py --config configs/nibi_sweep_binary_fathomnet_like.yaml
+#   python3 scripts/submit_sweep.py --config configs/nibi_sweep_binary_fathomnet_like.yaml --submit
+
+global:
+  repo: /home/merileo/yolo_segmentation
+  venv: /home/merileo/yolo_segmentation/.venv
+  data: /project/def-kmoran/merileo/yolo_segmentation/data/mbari_raw.tar.gz
+  mode: binary
+  top_n: 100
+  val_ratio: 0.2
+  split_seed: 0
+  epochs: 100
+  gpus_per_node: h100:2
+  wandb_project: yolo-segmentation-mbari-binary
+  wandb_group: nibi_binary_fathomnet_like_2026_02
+  wandb_tags: mbari,binary,nibi,fathomnet_like
+  train:
+    imgsz: 640
+    optimizer: auto
+    patience: 5
+    lrf: 0.01
+    save_period: -1
+    seed: 0
+
+experiments:
+  - name: fn_like_yolo11m_b16_lr1e2_s0
+    model: yolo11m-seg.pt
+    batch: 16
+    train:
+      lr0: 0.01
+
+  - name: fn_like_yolo11l_b16_lr1e2_s0
+    model: yolo11l-seg.pt
+    batch: 16
+    train:
+      lr0: 0.01
+
+  - name: fn_like_yolo11x_b16_lr1e2_s0
+    model: yolo11x-seg.pt
+    batch: 16
+    train:
+      lr0: 0.01
+
+  - name: fn_like_yolo11x_b16_lr5e3_s0
+    model: yolo11x-seg.pt
+    batch: 16
+    train:
+      lr0: 0.005

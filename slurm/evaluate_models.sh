@@ -19,13 +19,15 @@
 #       --checkpoints-root /scratch/$USER/yolo_seg/2026-02-13 \
 #       --data /project/def-kmoran/merileo/yolo_segmentation/data/mbari_test_raw.tar.gz \
 #       --mode binary \
+#       --splits val,test \
 #       --split val
 #
 # You can skip --data and pass --dataset-yaml if you already prepared a YOLO
 # dataset config:
 #   sbatch slurm/evaluate_models.sh \
 #       --checkpoints-root /scratch/$USER/yolo_seg/2026-02-13 \
-#       --dataset-yaml /scratch/$USER/mbari_eval/yolo_dataset/dataset.yaml
+#       --dataset-yaml /scratch/$USER/mbari_eval/yolo_dataset/dataset.yaml \
+#       --splits val,test
 # ============================================================================
 
 set -euo pipefail
@@ -41,6 +43,7 @@ CONVERT_TOP_N="100"
 VAL_RATIO="0.2"
 SPLIT_SEED="42"
 EVAL_SPLIT="val"
+EVAL_SPLITS="val,test"
 EVAL_IMGSZ="640"
 EVAL_BATCH="16"
 EVAL_WORKERS="8"
@@ -89,6 +92,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --split)
             EVAL_SPLIT="$2"
+            shift 2
+            ;;
+        --splits)
+            EVAL_SPLITS="$2"
             shift 2
             ;;
         --imgsz)
@@ -188,6 +195,7 @@ top_n: ${CONVERT_TOP_N}
 val_ratio: ${VAL_RATIO}
 split_seed: ${SPLIT_SEED}
 split: ${EVAL_SPLIT}
+splits: ${EVAL_SPLITS}
 imgsz: ${EVAL_IMGSZ}
 batch: ${EVAL_BATCH}
 workers: ${EVAL_WORKERS}
@@ -272,7 +280,8 @@ BENCHMARK_CMD=(
     --dataset "${DATASET_YAML}"
     --checkpoints-root "${CHECKPOINTS_ROOT}"
     --pattern "${CHECKPOINT_PATTERN}"
-    --split "${EVAL_SPLIT}"
+    --splits ${EVAL_SPLITS//,/ }
+    --rank-split "${EVAL_SPLIT}"
     --imgsz "${EVAL_IMGSZ}"
     --batch "${EVAL_BATCH}"
     --workers "${EVAL_WORKERS}"

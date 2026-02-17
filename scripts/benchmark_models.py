@@ -39,6 +39,16 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _available_splits(dataset_yaml: Path) -> List[str]:
+    data = _load_yaml(dataset_yaml)
+    out = []
+    for split in ("train", "val", "test"):
+        value = data.get(split)
+        if isinstance(value, str) and value.strip():
+            out.append(split)
+    return out
+
+
 def _collect_checkpoints(
     explicit: List[str],
     roots: List[str],
@@ -128,6 +138,7 @@ def _extract_run_metadata(checkpoint: Path) -> Dict[str, Any]:
         "epochs": run_cfg.get("epochs") or train_args.get("epochs"),
         "batch": run_cfg.get("batch") or train_args.get("batch"),
         "seed": train_args.get("seed"),
+        "train_results_plot": str(train_dir / "results.png") if (train_dir / "results.png").exists() else "",
     }
     return metadata
 
@@ -136,6 +147,7 @@ def _write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
     fixed_cols = [
         "rank",
         "status",
+        "split",
         "run_name",
         "checkpoint",
         "score",
@@ -150,6 +162,10 @@ def _write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
         "seed",
         "train_dir",
         "run_dir",
+        "eval_dir",
+        "train_results_plot",
+        "confusion_matrix",
+        "confusion_matrix_normalized",
         "error",
     ]
 
@@ -181,10 +197,13 @@ def _write_markdown(
     lines.append("")
     lines.append(f"- Generated: {summary['generated_at']}")
     lines.append(f"- Dataset: `{summary['dataset']}`")
-    lines.append(f"- Split: `{summary['split']}`")
+    lines.append(f"- Requested splits: `{', '.join(summary['requested_splits'])}`")
+    lines.append(f"- Available splits in dataset: `{', '.join(summary['available_splits'])}`")
+    lines.append(f"- Ranking split: `{summary['rank_split']}`")
     lines.append(f"- Primary metric: `{primary_metric}`")
-    lines.append(f"- Models discovered: {summary['total_models']}")
-    lines.append(f"- Models succeeded: {summary['successful_models']}")
+    lines.append(f"- Checkpoints discovered: {summary['total_checkpoints']}")
+    lines.append(f"- Evaluations executed: {summary['total_evaluations']}")
+    lines.append(f"- Rankable evaluations succeeded: {summary['successful_ranked_evaluations']}")
     lines.append("")
     if best:
         lines.append(f"- Best checkpoint: `{best.get('checkpoint')}`")
@@ -193,6 +212,7 @@ def _write_markdown(
 
     table_cols = [
         "rank",
+        "split",
         "run_name",
         "score",
         "score_metric",
@@ -239,7 +259,24 @@ def main() -> int:
         default="weights/best.pt",
         help="Recursive file pattern used under checkpoint roots",
     )
-    parser.add_argument("--split", default="val", choices=["train", "val", "test"])
+    parser.add_argument(
+        "--splits",
+        nargs="+",
+        default=["val", "test"],
+        help="One or more dataset splits to evaluate (e.g. --splits val test)",
+    )
+    parser.add_argument(
+        "--split",
+        choices=["train", "val", "test"],
+        default=None,
+        help="Deprecated alias for a single split; overrides --splits when provided.",
+    )
+    parser.add_argument(
+        "--rank-split",
+        default="val",
+        choices=["train", "val", "test"],
+        help="Split used for ranking checkpoints",
+    )
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--workers", type=int, default=8)
@@ -271,6 +308,14 @@ def main() -> int:
         print(f"Dataset YAML not found: {dataset_path}", file=sys.stderr)
         return 1
 
+    eval_splits = list(args.splits)
+    if args.split is not None:
+        eval_splits = [args.split]
+    # Preserve order but remove duplicates.
+    seen = set()
+    eval_splits = [s for s in eval_splits if not (s in seen or seen.add(s))]
+    available_splits = _available_splits(dataset_path)
+
     checkpoints = _collect_checkpoints(
         explicit=args.checkpoint,
         roots=args.checkpoints_root,
@@ -286,43 +331,74 @@ def main() -> int:
     run_name = args.name or dt.datetime.now().strftime("benchmark_%Y%m%d_%H%M%S")
     out_dir = Path(args.project).expanduser().resolve() / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
-    val_project = out_dir / "val_runs"
-    val_project.mkdir(parents=True, exist_ok=True)
+    eval_project = out_dir / "eval_runs"
+    eval_project.mkdir(parents=True, exist_ok=True)
 
     rows: List[Dict[str, Any]] = []
     for idx, checkpoint in enumerate(checkpoints, start=1):
         print(f"[{idx}/{len(checkpoints)}] Evaluating {checkpoint}")
-        row = _extract_run_metadata(checkpoint)
-        row["status"] = "ok"
-        row["error"] = ""
+        model = YOLO(str(checkpoint))
 
-        eval_name = f"{idx:03d}_{checkpoint.parent.parent.parent.name}"
-        try:
-            model = YOLO(str(checkpoint))
-            metrics_obj = model.val(
-                data=str(dataset_path),
-                split=args.split,
-                imgsz=args.imgsz,
-                batch=args.batch,
-                workers=args.workers,
-                device=args.device,
-                project=str(val_project),
-                name=eval_name,
-                exist_ok=True,
-                verbose=args.verbose,
-                plots=False,
-            )
-            row.update(_extract_metrics(metrics_obj))
-        except Exception as exc:  # noqa: BLE001
-            row["status"] = "failed"
-            row["error"] = str(exc)
+        for split in eval_splits:
+            row = _extract_run_metadata(checkpoint)
+            row["split"] = split
+            row["status"] = "ok"
+            row["error"] = ""
+            row["eval_dir"] = ""
+            row["confusion_matrix"] = ""
+            row["confusion_matrix_normalized"] = ""
 
-        score, score_metric = _choose_score(row, args.primary_metric)
-        row["score"] = score if score != float("-inf") else ""
-        row["score_metric"] = score_metric
-        rows.append(row)
+            if split not in available_splits:
+                row["status"] = "missing_split"
+                row["error"] = f"Dataset YAML has no '{split}' entry"
+                row["score"] = ""
+                row["score_metric"] = ""
+                rows.append(row)
+                continue
 
-    successful = [r for r in rows if r.get("status") == "ok" and r.get("score") != ""]
+            eval_name = f"{idx:03d}_{checkpoint.parent.parent.parent.name}_{split}"
+            try:
+                metrics_obj = model.val(
+                    data=str(dataset_path),
+                    split=split,
+                    imgsz=args.imgsz,
+                    batch=args.batch,
+                    workers=args.workers,
+                    device=args.device,
+                    project=str(eval_project),
+                    name=eval_name,
+                    exist_ok=True,
+                    verbose=args.verbose,
+                    plots=True,
+                )
+                row.update(_extract_metrics(metrics_obj))
+
+                save_dir = Path(getattr(metrics_obj, "save_dir", eval_project / eval_name))
+                row["eval_dir"] = str(save_dir)
+                cm = save_dir / "confusion_matrix.png"
+                cmn = save_dir / "confusion_matrix_normalized.png"
+                if cm.exists():
+                    row["confusion_matrix"] = str(cm)
+                if cmn.exists():
+                    row["confusion_matrix_normalized"] = str(cmn)
+            except Exception as exc:  # noqa: BLE001
+                row["status"] = "failed"
+                row["error"] = str(exc)
+
+            if split == args.rank_split:
+                score, score_metric = _choose_score(row, args.primary_metric)
+                row["score"] = score if score != float("-inf") else ""
+                row["score_metric"] = score_metric
+            else:
+                row["score"] = ""
+                row["score_metric"] = ""
+            rows.append(row)
+
+    successful = [
+        r
+        for r in rows
+        if r.get("split") == args.rank_split and r.get("status") == "ok" and r.get("score") != ""
+    ]
     successful_sorted = sorted(successful, key=lambda x: float(x["score"]), reverse=True)
 
     for rank, row in enumerate(successful_sorted, start=1):
@@ -336,10 +412,13 @@ def main() -> int:
     summary = {
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
         "dataset": str(dataset_path),
-        "split": args.split,
+        "requested_splits": eval_splits,
+        "available_splits": available_splits,
+        "rank_split": args.rank_split,
         "primary_metric": args.primary_metric,
-        "total_models": len(rows),
-        "successful_models": len(successful_sorted),
+        "total_checkpoints": len(checkpoints),
+        "total_evaluations": len(rows),
+        "successful_ranked_evaluations": len(successful_sorted),
         "best": {
             "checkpoint": best.get("checkpoint"),
             "score": best.get("score"),
