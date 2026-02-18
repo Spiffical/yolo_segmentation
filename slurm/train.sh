@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --account=def-kmoran
 #SBATCH --gpus-per-node=h100:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64000M
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=32000M
 #SBATCH --time=24:00:00
 #SBATCH --job-name=yolo_seg
 #SBATCH --output=/home/%u/yolo_segmentation/logs/%x-%j.out
@@ -19,6 +19,7 @@
 #   sbatch slurm/train.sh --mode binary                # Binary segmentation
 #   sbatch slurm/train.sh --mode top_n --top_n 100     # Top 100 categories
 #   sbatch slurm/train.sh --model yolo11l-seg.pt       # Use larger model
+#   sbatch --cpus-per-task=6 --mem=32000M slurm/train.sh --mode binary
 #
 # Arguments:
 #   --repo DIR          Path to yolo_segmentation repo (default: ~/yolo_segmentation)

@@ -157,8 +157,15 @@ python scripts/submit_sweep.py \
     --config configs/nibi_sweep_binary.yaml
 ```
 
+Sweep YAML also supports optional Slurm resource keys in `global` or per
+experiment:
+- `gpus_per_node` (e.g. `h100:1`)
+- `cpus_per_task` (e.g. `6`)
+- `mem` (e.g. `32000M`)
+- `time` (e.g. `24:00:00`)
+
 For a FathomNet-like training regime (`imgsz=640`, `optimizer=auto`,
-`patience=5`, `lr0=0.01`, `batch=16`), use:
+`patience=5`, `lr0=0.01`), use:
 
 ```bash
 python scripts/submit_sweep.py \
@@ -189,6 +196,12 @@ python scripts/submit_sweep.py \
 
 Each run gets a deterministic W&B name/group and a saved command manifest for
 later traceability.
+
+Practical queue-friendly default on Nibi:
+- `gpus_per_node: h100:1`
+- `cpus_per_task: 6`
+- `mem: 32000M`
+- Batch sizes chosen to keep per-GPU load similar to your earlier 2/4-GPU runs.
 
 ## Benchmark All Checkpoints Into One Report
 

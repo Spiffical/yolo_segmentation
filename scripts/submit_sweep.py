@@ -53,6 +53,12 @@ SBATCH_FLAG_MAP = {
     "wandb_tags": "--wandb-tags",
 }
 
+SBATCH_RESOURCE_KEYS = {
+    "cpus_per_task": "--cpus-per-task",
+    "mem": "--mem",
+    "time": "--time",
+}
+
 
 def _flag(name: str) -> str:
     return f"--{name.replace('_', '-')}"
@@ -137,6 +143,9 @@ def _build_commands(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
             f"--gpus-per-node={gpus_per_node}",
             "slurm/train.sh",
         ]
+
+        for key, flag in SBATCH_RESOURCE_KEYS.items():
+            _append_opt(cmd, flag, merged.get(key))
 
         resolved = dict(merged)
         resolved["wandb_name"] = wandb_name
