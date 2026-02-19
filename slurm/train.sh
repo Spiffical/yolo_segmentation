@@ -123,6 +123,12 @@ while [[ $# -gt 0 ]]; do
             BATCH="$2"
             shift 2
             ;;
+        # Guardrail: these are sbatch flags, not train.sh flags.
+        # Ignore them if they are accidentally placed after script path.
+        --cpus-per-task|--mem|--time)
+            echo "WARNING: Ignoring SLURM option passed to train.sh: $1 $2"
+            shift 2
+            ;;
         --wandb-project)
             WANDB_PROJECT="$2"
             shift 2

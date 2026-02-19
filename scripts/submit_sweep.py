@@ -141,11 +141,12 @@ def _build_commands(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
         cmd: List[str] = [
             "sbatch",
             f"--gpus-per-node={gpus_per_node}",
-            "slurm/train.sh",
         ]
 
         for key, flag in SBATCH_RESOURCE_KEYS.items():
             _append_opt(cmd, flag, merged.get(key))
+
+        cmd.append("slurm/train.sh")
 
         resolved = dict(merged)
         resolved["wandb_name"] = wandb_name
