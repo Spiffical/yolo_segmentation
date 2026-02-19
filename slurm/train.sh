@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=def-kmoran
+#SBATCH --account=rpp-kmoran
 #SBATCH --gpus-per-node=h100:1
 #SBATCH --cpus-per-task=6
 #SBATCH --mem=32000M
