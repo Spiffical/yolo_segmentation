@@ -246,6 +246,14 @@ def main():
     if args.snapshot_best_confusion:
         best_state = {'signature': None}
 
+        def _force_epoch_plots(trainer):
+            """Ensure confusion matrix plots are generated during each epoch validation."""
+            if not hasattr(trainer, 'validator'):
+                return
+            trainer.validator.args.split = args.best_confusion_split
+            trainer.validator.args.plots = True
+            trainer.stopper.possible_stop = True
+
         def snapshot_best_confusion(trainer):
             best_path = Path(trainer.best)
             if not best_path.exists():
@@ -260,35 +268,8 @@ def main():
             epoch_num = int(getattr(trainer, 'epoch', -1)) + 1
             print(
                 f"[best-snapshot] best.pt updated at epoch {epoch_num}; "
-                f"generating confusion matrices for split='{args.best_confusion_split}'."
+                f"capturing confusion matrices for split='{args.best_confusion_split}'."
             )
-
-            prev_plots = bool(getattr(trainer.validator.args, 'plots', False))
-            prev_split = getattr(trainer.validator.args, 'split', 'val')
-            prev_possible_stop = bool(getattr(trainer.stopper, 'possible_stop', False))
-            prev_metrics = trainer.metrics
-            prev_fitness = trainer.fitness
-
-            validation_ok = False
-            try:
-                # Ultralytics suppresses per-epoch plotting unless early-stop is near.
-                # Force plotting for this best-checkpoint snapshot validation only.
-                trainer.stopper.possible_stop = True
-                trainer.validator.args.plots = True
-                trainer.validator.args.split = args.best_confusion_split
-                trainer.metrics, trainer.fitness = trainer.validate()
-                validation_ok = True
-            except Exception as e:
-                print(f"[best-snapshot] WARNING: failed to generate confusion matrices: {e}")
-            finally:
-                trainer.validator.args.plots = prev_plots
-                trainer.validator.args.split = prev_split
-                trainer.stopper.possible_stop = prev_possible_stop
-                trainer.metrics = prev_metrics
-                trainer.fitness = prev_fitness
-
-            if not validation_ok:
-                return
 
             snapshot_dir = Path(trainer.save_dir) / 'best_snapshots' / f'epoch_{epoch_num:04d}'
             snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -301,15 +282,24 @@ def main():
                     shutil.copy2(src, dst)
                     copied.append(str(dst))
 
-            shutil.copy2(best_path, snapshot_dir / 'best.pt')
+            pointer_path = snapshot_dir / 'best_checkpoint.txt'
+            pointer_path.write_text(
+                f"path: {best_path}\n"
+                f"epoch: {epoch_num}\n"
+                f"mtime_ns: {best_stat.st_mtime_ns}\n"
+                f"size_bytes: {best_stat.st_size}\n",
+                encoding='utf-8'
+            )
 
             if copied:
                 print("[best-snapshot] saved:")
                 for path in copied:
                     print(f"  - {path}")
+                print(f"  - {pointer_path}")
             else:
-                print("[best-snapshot] WARNING: confusion matrix files were not found after validation.")
+                print("[best-snapshot] WARNING: confusion matrix files were not found after epoch validation.")
 
+        model.add_callback('on_train_epoch_end', _force_epoch_plots)
         model.add_callback('on_model_save', snapshot_best_confusion)
         print(f"Best-checkpoint confusion snapshots: enabled (split={args.best_confusion_split})")
     else:

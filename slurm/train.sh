@@ -341,6 +341,17 @@ echo "[3/5] Converting COCO RLE to YOLO polygon format..."
 echo "      Mode: ${CONVERT_MODE}, Top N: ${CONVERT_TOP_N}, Val ratio: ${VAL_RATIO}"
 
 YOLO_DATASET="${SLURM_TMPDIR}/yolo_dataset"
+NUM_CPUS=${SLURM_CPUS_PER_TASK:-8}
+if ! [[ "${NUM_CPUS}" =~ ^[0-9]+$ ]]; then
+    NUM_CPUS=8
+fi
+CONVERT_WORKERS="${NUM_CPUS}"
+if [ "${CONVERT_WORKERS}" -gt 8 ]; then
+    CONVERT_WORKERS=8
+fi
+if [ "${CONVERT_WORKERS}" -lt 1 ]; then
+    CONVERT_WORKERS=1
+fi
 
 cd "${REPO_DIR}"
 python scripts/convert_coco_to_yolo.py \
@@ -352,7 +363,7 @@ python scripts/convert_coco_to_yolo.py \
     --mode "${CONVERT_MODE}" \
     --top_n "${CONVERT_TOP_N}" \
     --min_annotations 0 \
-    --workers 8
+    --workers "${CONVERT_WORKERS}"
 
 # Verify conversion
 if [ ! -f "${YOLO_DATASET}/dataset.yaml" ]; then
@@ -389,10 +400,19 @@ if [ "${WANDB_ENABLED}" = true ]; then
         WANDB_RUN_NAME="${CONVERT_MODE}_${MODEL%.pt}_${SLURM_JOB_ID}"
     fi
     
-    # Export W&B environment variables for ultralytics
+    # Export W&B environment variables for ultralytics.
+    # Keep transient W&B files on node-local storage to reduce quota pressure.
+    WANDB_LOCAL_BASE="${SLURM_TMPDIR:-${OUTPUT_DIR}}"
+    WANDB_LOCAL_DIR="${WANDB_LOCAL_BASE}/wandb"
+    WANDB_LOCAL_CACHE="${WANDB_LOCAL_BASE}/wandb_cache"
+    mkdir -p "${WANDB_LOCAL_DIR}" "${WANDB_LOCAL_CACHE}"
+
     export WANDB_PROJECT="${WANDB_PROJECT}"
     export WANDB_NAME="${WANDB_RUN_NAME}"
-    export WANDB_DIR="${OUTPUT_DIR}"
+    export WANDB_DIR="${WANDB_LOCAL_DIR}"
+    export WANDB_CACHE_DIR="${WANDB_LOCAL_CACHE}"
+    export WANDB_CONSOLE=off
+    echo "W&B local dir: ${WANDB_DIR}"
     if [ -n "${WANDB_GROUP}" ]; then
         export WANDB_GROUP="${WANDB_GROUP}"
         echo "W&B group: ${WANDB_GROUP}"
@@ -418,6 +438,9 @@ DATASET_CONFIG="${YOLO_DATASET}/dataset.yaml"
 
 # Use available CPUs for workers (respects SLURM allocation)
 NUM_WORKERS=${SLURM_CPUS_PER_TASK:-8}
+if ! [[ "${NUM_WORKERS}" =~ ^[0-9]+$ ]]; then
+    NUM_WORKERS=8
+fi
 
 # Determine Ultralytics device argument from what PyTorch can actually see.
 # On MIG systems, CUDA_VISIBLE_DEVICES may list more UUIDs than torch exposes.
@@ -441,16 +464,18 @@ else
 fi
 echo "Training device argument: ${DEVICE_ARG} (torch cuda count=${GPU_COUNT}, CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset})"
 
-# Scale dataloader workers per training process for DDP.
-# Ultralytics interprets --workers per process, so total workers ~= workers * GPU_COUNT.
-TRAIN_WORKERS="${NUM_WORKERS}"
-if [ "${GPU_COUNT}" -gt 1 ]; then
-    TRAIN_WORKERS=$(( NUM_WORKERS / GPU_COUNT ))
-    if [ "${TRAIN_WORKERS}" -lt 1 ]; then
-        TRAIN_WORKERS=1
-    fi
+# Scale dataloader workers per process.
+# Training+validation each create workers, so total ~= workers * processes * 2.
+PROCESS_COUNT=1
+if [ "${GPU_COUNT}" -gt 0 ]; then
+    PROCESS_COUNT="${GPU_COUNT}"
 fi
-echo "Dataloader workers: per-process=${TRAIN_WORKERS}, approx-total=$(( TRAIN_WORKERS * (GPU_COUNT > 0 ? GPU_COUNT : 1) ))"
+TRAIN_WORKERS=$(( NUM_WORKERS / (2 * PROCESS_COUNT) ))
+if [ "${TRAIN_WORKERS}" -lt 1 ]; then
+    TRAIN_WORKERS=1
+fi
+APPROX_TOTAL_WORKERS=$(( TRAIN_WORKERS * PROCESS_COUNT * 2 ))
+echo "Dataloader workers: per-process=${TRAIN_WORKERS}, approx-total=${APPROX_TOTAL_WORKERS}"
 
 python scripts/train.py \
     --data "${DATASET_CONFIG}" \
