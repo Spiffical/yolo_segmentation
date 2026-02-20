@@ -5,8 +5,8 @@
 #SBATCH --mem=32000M
 #SBATCH --time=24:00:00
 #SBATCH --job-name=yolo_seg
-#SBATCH --output=/home/%u/yolo_segmentation/logs/%x-%j.out
-#SBATCH --error=/home/%u/yolo_segmentation/logs/%x-%j.err
+#SBATCH --output=/scratch/%u/yolo_seg-%x-%j.out
+#SBATCH --error=/scratch/%u/yolo_seg-%x-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=spencer.bialek@gmail.com
 
@@ -184,6 +184,10 @@ fi
 
 # Output directory - use $SCRATCH for large training outputs
 # Organized as: $SCRATCH/yolo_seg/<date>/<mode>_<job_id>/
+if [ -z "${SCRATCH:-}" ]; then
+    echo "ERROR: SCRATCH is not set. This job is configured to write outputs to \$SCRATCH only."
+    exit 1
+fi
 OUTPUT_BASE="${SCRATCH}/yolo_seg"
 RUN_DATE=$(date +%Y-%m-%d)
 RUN_NAME="${CONVERT_MODE}_${SLURM_JOB_ID}"
@@ -213,9 +217,25 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
 echo "SLURM_JOB_GPUS: ${SLURM_JOB_GPUS:-not set}"
 echo "============================================"
 
-# Create directories
-mkdir -p "${REPO_DIR}/logs"
+# Create directories (SCRATCH only)
 mkdir -p "${OUTPUT_DIR}"
+
+# Keep runtime writes/caches in SCRATCH (not HOME).
+RUNTIME_BASE="${OUTPUT_DIR}/runtime"
+mkdir -p \
+    "${RUNTIME_BASE}/xdg_cache" \
+    "${RUNTIME_BASE}/mplconfig" \
+    "${RUNTIME_BASE}/ultralytics" \
+    "${RUNTIME_BASE}/torch" \
+    "${RUNTIME_BASE}/wandb" \
+    "${RUNTIME_BASE}/wandb_cache" \
+    "${RUNTIME_BASE}/wandb_config"
+
+export PYTHONDONTWRITEBYTECODE=1
+export XDG_CACHE_HOME="${RUNTIME_BASE}/xdg_cache"
+export MPLCONFIGDIR="${RUNTIME_BASE}/mplconfig"
+export YOLO_CONFIG_DIR="${RUNTIME_BASE}/ultralytics"
+export TORCH_HOME="${RUNTIME_BASE}/torch"
 
 # Save run configuration for reproducibility
 cat > "${OUTPUT_DIR}/run_config.yaml" << EOF
@@ -400,17 +420,18 @@ if [ "${WANDB_ENABLED}" = true ]; then
         WANDB_RUN_NAME="${CONVERT_MODE}_${MODEL%.pt}_${SLURM_JOB_ID}"
     fi
     
-    # Export W&B environment variables for ultralytics.
-    # Keep transient W&B files on node-local storage to reduce quota pressure.
-    WANDB_LOCAL_BASE="${SLURM_TMPDIR:-${OUTPUT_DIR}}"
+    # Export W&B environment variables for ultralytics (SCRATCH only).
+    WANDB_LOCAL_BASE="${RUNTIME_BASE}"
     WANDB_LOCAL_DIR="${WANDB_LOCAL_BASE}/wandb"
     WANDB_LOCAL_CACHE="${WANDB_LOCAL_BASE}/wandb_cache"
-    mkdir -p "${WANDB_LOCAL_DIR}" "${WANDB_LOCAL_CACHE}"
+    WANDB_LOCAL_CONFIG="${WANDB_LOCAL_BASE}/wandb_config"
+    mkdir -p "${WANDB_LOCAL_DIR}" "${WANDB_LOCAL_CACHE}" "${WANDB_LOCAL_CONFIG}"
 
     export WANDB_PROJECT="${WANDB_PROJECT}"
     export WANDB_NAME="${WANDB_RUN_NAME}"
     export WANDB_DIR="${WANDB_LOCAL_DIR}"
     export WANDB_CACHE_DIR="${WANDB_LOCAL_CACHE}"
+    export WANDB_CONFIG_DIR="${WANDB_LOCAL_CONFIG}"
     export WANDB_CONSOLE=off
     echo "W&B local dir: ${WANDB_DIR}"
     if [ -n "${WANDB_GROUP}" ]; then
@@ -512,9 +533,9 @@ if [ -d "${RESULTS_DIR}" ]; then
     echo "              └── results.csv"
     echo ""
     
-    # Create a symlink in the repo for convenience
-    LATEST_LINK="${REPO_DIR}/runs/latest"
-    mkdir -p "${REPO_DIR}/runs"
+    # Create/update a latest symlink in SCRATCH for convenience
+    LATEST_LINK="${OUTPUT_BASE}/latest"
+    mkdir -p "${OUTPUT_BASE}"
     rm -f "${LATEST_LINK}"
     ln -s "${RESULTS_DIR}" "${LATEST_LINK}"
     echo "Symlink created: ${LATEST_LINK} -> ${RESULTS_DIR}"

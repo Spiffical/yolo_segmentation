@@ -9,6 +9,7 @@ later benchmark checkpoints and trace back exactly how each model was trained.
 import argparse
 import csv
 import datetime as dt
+import os
 import re
 import shlex
 import subprocess
@@ -198,8 +199,8 @@ def main() -> int:
     parser.add_argument(
         "--output-dir",
         "-o",
-        default="runs/sweeps",
-        help="Directory for sweep manifests",
+        default=None,
+        help="Directory for sweep manifests (default: $SCRATCH/yolo_seg/sweeps when available)",
     )
     parser.add_argument(
         "--submit",
@@ -220,9 +221,16 @@ def main() -> int:
         print(f"Config error: {exc}", file=sys.stderr)
         return 1
 
+    if args.output_dir:
+        output_root = Path(args.output_dir)
+    elif os.environ.get("SCRATCH"):
+        output_root = Path(os.environ["SCRATCH"]) / "yolo_seg" / "sweeps"
+    else:
+        output_root = Path("runs/sweeps")
+
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     sweep_name = f"{timestamp}_{config_path.stem}"
-    out_dir = Path(args.output_dir) / sweep_name
+    out_dir = output_root / sweep_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     resolved_cfg_path = out_dir / "resolved_config.yaml"
