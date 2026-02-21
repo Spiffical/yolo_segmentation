@@ -236,9 +236,15 @@ def main():
         sys.exit(1)
     
     # Load model
+    resume_ckpt = None
     if args.resume:
-        print(f"\nResuming from checkpoint: {args.resume}")
-        model = YOLO(args.resume)
+        resume_ckpt = Path(args.resume).expanduser().resolve()
+        if not resume_ckpt.exists():
+            print(f"\nError: Resume checkpoint not found: {resume_ckpt}")
+            print("Pass a valid path to weights/last.pt for full-state resume.")
+            sys.exit(1)
+        print(f"\nResuming from checkpoint: {resume_ckpt}")
+        model = YOLO(str(resume_ckpt))
     else:
         print(f"\nLoading base model: {args.model}")
         model = YOLO(args.model)
@@ -373,7 +379,7 @@ def main():
             pass
     
     # Train
-    results = model.train(
+    train_kwargs = dict(
         data=args.data,
         epochs=args.epochs,
         batch=args.batch,
@@ -383,7 +389,7 @@ def main():
         project=args.project,
         name=args.name,
         exist_ok=True,
-        pretrained=True,
+        pretrained=(resume_ckpt is None),
         optimizer=args.optimizer,
         lr0=args.lr0,
         lrf=args.lrf,
@@ -395,12 +401,24 @@ def main():
         val=True,
         plots=True,
     )
+    if resume_ckpt is not None:
+        # True Ultralytics resume: restores optimizer/scheduler/epoch state.
+        # Use last.pt (not best.pt) for this.
+        train_kwargs['resume'] = True
+
+    results = model.train(**train_kwargs)
     
     print("\n" + "="*60)
     print("Training Complete!")
     print("="*60)
-    print(f"Best model saved to: {args.project}/{args.name}/weights/best.pt")
-    print(f"Last model saved to: {args.project}/{args.name}/weights/last.pt")
+    save_dir = Path(args.project) / args.name
+    try:
+        if getattr(model, 'trainer', None) is not None and getattr(model.trainer, 'save_dir', None) is not None:
+            save_dir = Path(model.trainer.save_dir)
+    except Exception:
+        pass
+    print(f"Best model saved to: {save_dir}/weights/best.pt")
+    print(f"Last model saved to: {save_dir}/weights/last.pt")
     
     return results
 
