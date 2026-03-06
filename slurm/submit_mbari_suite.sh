@@ -6,10 +6,16 @@
 #   DRY_RUN=1 bash slurm/submit_mbari_suite.sh
 #   INCLUDE_MIDWATER=1 bash slurm/submit_mbari_suite.sh
 #
-# Optional overrides:
+# CLI examples:
+#   bash slurm/submit_mbari_suite.sh \
+#     --data /project/rpp-kmoran/merileo/data/mbari_raw.tar.gz \
+#     --checkpoint-root /project/rpp-kmoran/merileo/yolo_data/models/fathomnet
+#   bash slurm/submit_mbari_suite.sh --dry-run --include-midwater
+#
+# Environment-variable overrides also work:
 #   REPO_DIR=/home/merileo/yolo_segmentation
 #   VENV_PATH=/home/merileo/yolo_segmentation/.venv
-#   DATA_TARBALL=/project/rpp-kmoran/merileo/yolo_segmentation/data/mbari_raw.tar.gz
+#   DATA_TARBALL=/project/rpp-kmoran/merileo/data/mbari_raw.tar.gz
 #   CHECKPOINT_ROOT=/project/rpp-kmoran/merileo/yolo_data/models/fathomnet
 #   SUITE_TAG=20260305_a
 #   DRY_RUN=1
@@ -18,55 +24,62 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
-TRAIN_SCRIPT="${REPO_DIR}/slurm/train.sh"
-LABEL_PLANS_FILE="${LABEL_PLANS_FILE:-${REPO_DIR}/configs/label_plans.yaml}"
 
-if [[ ! -f "${TRAIN_SCRIPT}" ]]; then
-    echo "ERROR: train script not found: ${TRAIN_SCRIPT}" >&2
-    exit 1
-fi
+usage() {
+    cat <<'EOF'
+Usage:
+  bash slurm/submit_mbari_suite.sh [options]
 
-if [[ ! -f "${LABEL_PLANS_FILE}" ]]; then
-    echo "ERROR: label plan file not found: ${LABEL_PLANS_FILE}" >&2
-    exit 1
-fi
+Path overrides:
+  --repo DIR                 Repo root containing slurm/train.sh
+  --venv DIR                 Python virtualenv path
+  --data FILE                MBARI raw tarball path
+  --checkpoint-root DIR      Root containing fathomnet/{megalodon,mbari_315k_yolov8,midwater_2025}
+  --label-plans-file FILE    Coarse label YAML
+  --manifest-dir DIR         Submission manifest output directory
+  --megalodon-pt FILE        Override discovered Megalodon checkpoint path
+  --mbari315k-pt FILE        Override discovered MBARI-315k checkpoint path
+  --midwater-pt FILE         Override discovered Midwater checkpoint path
+
+Suite behavior:
+  --suite-tag TAG            W&B / manifest suite tag
+  --dry-run                  Print and record sbatch commands without submitting
+  --include-midwater         Include the midwater detector when found
+  --include-gear-variant     Include coarse_v1_bio8_plus_gear runs
+
+Resources:
+  --gpus-per-node SPEC       Default: h100:1
+  --cpus-per-task N          Default: 6
+  --mem SIZE                 Default: 32000M
+  --time HH:MM:SS            Default: 24:00:00
+
+Toggles:
+  --no-binary-detect
+  --no-coarse-detect
+  --no-binary-segment
+  --no-coarse-segment
+
+Examples:
+  bash slurm/submit_mbari_suite.sh \
+    --data /project/rpp-kmoran/merileo/data/mbari_raw.tar.gz \
+    --checkpoint-root /project/rpp-kmoran/merileo/yolo_data/models/fathomnet \
+    --dry-run
+EOF
+}
 
 DEFAULT_DATA_CANDIDATES=(
+    "/project/rpp-kmoran/merileo/data/mbari_raw.tar.gz"
     "/project/rpp-kmoran/merileo/yolo_segmentation/data/mbari_raw.tar.gz"
     "${REPO_DIR}/data/mbari_raw.tar.gz"
 )
 
-if [[ -z "${DATA_TARBALL:-}" ]]; then
-    for candidate in "${DEFAULT_DATA_CANDIDATES[@]}"; do
-        if [[ -f "${candidate}" ]]; then
-            DATA_TARBALL="${candidate}"
-            break
-        fi
-    done
-fi
-
-if [[ -z "${DATA_TARBALL:-}" || ! -f "${DATA_TARBALL}" ]]; then
-    echo "ERROR: data tarball not found. Set DATA_TARBALL=/path/to/mbari_raw.tar.gz" >&2
-    exit 1
-fi
-
-if [[ -z "${VENV_PATH:-}" ]]; then
-    for candidate in \
-        "${REPO_DIR}/.venv" \
-        "/home/merileo/yolo_segmentation/.venv" \
-        "${HOME}/yolo_segmentation/.venv"
-    do
-        if [[ -d "${candidate}" ]]; then
-            VENV_PATH="${candidate}"
-            break
-        fi
-    done
-fi
-
-if [[ -z "${VENV_PATH:-}" || ! -d "${VENV_PATH}" ]]; then
-    echo "ERROR: virtual environment not found. Set VENV_PATH=/path/to/.venv" >&2
-    exit 1
-fi
+find_first_pt() {
+    local search_dir="$1"
+    if [[ ! -d "${search_dir}" ]]; then
+        return 1
+    fi
+    find "${search_dir}" -maxdepth 2 -type f -name "*.pt" | sort | head -n 1
+}
 
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/project/rpp-kmoran/merileo/yolo_data/models/fathomnet}"
 SUITE_TAG="${SUITE_TAG:-$(date +%Y%m%d_%H%M%S)}"
@@ -92,24 +105,167 @@ WANDB_PROJECT_DET_BIN="${WANDB_PROJECT_DET_BIN:-yolo-detection-mbari-binary}"
 WANDB_PROJECT_DET_COARSE="${WANDB_PROJECT_DET_COARSE:-yolo-detection-mbari-coarse}"
 WANDB_PROJECT_SEG_BIN="${WANDB_PROJECT_SEG_BIN:-yolo-segmentation-mbari-binary}"
 WANDB_PROJECT_SEG_COARSE="${WANDB_PROJECT_SEG_COARSE:-yolo-segmentation-mbari-coarse}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --repo)
+            REPO_DIR="$2"
+            shift 2
+            ;;
+        --venv)
+            VENV_PATH="$2"
+            shift 2
+            ;;
+        --data)
+            DATA_TARBALL="$2"
+            shift 2
+            ;;
+        --checkpoint-root)
+            CHECKPOINT_ROOT="$2"
+            shift 2
+            ;;
+        --label-plans-file)
+            LABEL_PLANS_FILE="$2"
+            shift 2
+            ;;
+        --manifest-dir)
+            MANIFEST_DIR="$2"
+            shift 2
+            ;;
+        --suite-tag)
+            SUITE_TAG="$2"
+            shift 2
+            ;;
+        --megalodon-pt)
+            MEGALODON_PT="$2"
+            shift 2
+            ;;
+        --mbari315k-pt)
+            MBARI315K_PT="$2"
+            shift 2
+            ;;
+        --midwater-pt)
+            MIDWATER_PT="$2"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --include-midwater)
+            INCLUDE_MIDWATER=1
+            shift
+            ;;
+        --include-gear-variant)
+            INCLUDE_GEAR_VARIANT=1
+            shift
+            ;;
+        --no-binary-detect)
+            RUN_BINARY_DETECT=0
+            shift
+            ;;
+        --no-coarse-detect)
+            RUN_COARSE_DETECT=0
+            shift
+            ;;
+        --no-binary-segment)
+            RUN_BINARY_SEGMENT=0
+            shift
+            ;;
+        --no-coarse-segment)
+            RUN_COARSE_SEGMENT=0
+            shift
+            ;;
+        --gpus-per-node)
+            GPUS_PER_NODE="$2"
+            shift 2
+            ;;
+        --cpus-per-task)
+            CPUS_PER_TASK="$2"
+            shift 2
+            ;;
+        --mem)
+            MEM="$2"
+            shift 2
+            ;;
+        --time)
+            TIME_LIMIT="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+TRAIN_SCRIPT="${REPO_DIR}/slurm/train.sh"
+LABEL_PLANS_FILE="${LABEL_PLANS_FILE:-${REPO_DIR}/configs/label_plans.yaml}"
 WANDB_GROUP_PREFIX="${WANDB_GROUP_PREFIX:-mbari_suite_${SUITE_TAG}}"
 
-if [[ -n "${SCRATCH:-}" ]]; then
-    MANIFEST_DIR="${SCRATCH}/yolo_seg/submissions"
-else
-    MANIFEST_DIR="${REPO_DIR}/runs/submissions"
+if [[ ! -f "${TRAIN_SCRIPT}" ]]; then
+    echo "ERROR: train script not found: ${TRAIN_SCRIPT}" >&2
+    exit 1
+fi
+
+if [[ ! -f "${LABEL_PLANS_FILE}" ]]; then
+    echo "ERROR: label plan file not found: ${LABEL_PLANS_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${DATA_TARBALL:-}" ]]; then
+    for candidate in "${DEFAULT_DATA_CANDIDATES[@]}"; do
+        if [[ -f "${candidate}" ]]; then
+            DATA_TARBALL="${candidate}"
+            break
+        fi
+    done
+fi
+
+if [[ -z "${DATA_TARBALL:-}" || ! -f "${DATA_TARBALL}" ]]; then
+    echo "ERROR: data tarball not found: ${DATA_TARBALL:-<unset>}" >&2
+    echo "Tried default candidates:" >&2
+    for candidate in "${DEFAULT_DATA_CANDIDATES[@]}"; do
+        echo "  - ${candidate}" >&2
+    done
+    echo "Pass --data /path/to/mbari_raw.tar.gz" >&2
+    exit 1
+fi
+
+if [[ -z "${VENV_PATH:-}" ]]; then
+    for candidate in \
+        "${REPO_DIR}/.venv" \
+        "/home/merileo/yolo_segmentation/.venv" \
+        "${HOME}/yolo_segmentation/.venv"
+    do
+        if [[ -d "${candidate}" ]]; then
+            VENV_PATH="${candidate}"
+            break
+        fi
+    done
+fi
+
+if [[ -z "${VENV_PATH:-}" || ! -d "${VENV_PATH}" ]]; then
+    echo "ERROR: virtual environment not found: ${VENV_PATH:-<unset>}" >&2
+    echo "Pass --venv /path/to/.venv" >&2
+    exit 1
+fi
+
+if [[ -z "${MANIFEST_DIR:-}" ]]; then
+    if [[ -n "${SCRATCH:-}" ]]; then
+        MANIFEST_DIR="${SCRATCH}/yolo_seg/submissions"
+    else
+        MANIFEST_DIR="${REPO_DIR}/runs/submissions"
+    fi
 fi
 mkdir -p "${MANIFEST_DIR}"
 MANIFEST_PATH="${MANIFEST_DIR}/${SUITE_TAG}_mbari_suite.tsv"
 printf "status\tjob_id\tname\tproject\tgroup\tmodel\tcommand\n" > "${MANIFEST_PATH}"
-
-find_first_pt() {
-    local search_dir="$1"
-    if [[ ! -d "${search_dir}" ]]; then
-        return 1
-    fi
-    find "${search_dir}" -maxdepth 2 -type f -name "*.pt" | sort | head -n 1
-}
 
 MEGALODON_PT="${MEGALODON_PT:-$(find_first_pt "${CHECKPOINT_ROOT}/megalodon" || true)}"
 MBARI315K_PT="${MBARI315K_PT:-$(find_first_pt "${CHECKPOINT_ROOT}/mbari_315k_yolov8" || true)}"
