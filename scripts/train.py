@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """
-Train YOLOv11 segmentation model on MBARI underwater images.
+Train Ultralytics YOLO detection or segmentation models on MBARI imagery.
 
-This script provides a clean CLI interface for training with sensible defaults
-for both local development and cluster deployment.
+This script provides a clean CLI interface for both local development and
+cluster deployment.
 """
 
-import argparse
 import os
 import shutil
 import sys
+import argparse
 from pathlib import Path
 from datetime import datetime
+
+if "YOLO_CONFIG_DIR" not in os.environ:
+    local_config_dir = (Path(__file__).resolve().parent.parent / "runs" / "ultralytics").resolve()
+    local_config_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["YOLO_CONFIG_DIR"] = str(local_config_dir)
 
 try:
     from ultralytics import YOLO
@@ -32,7 +37,7 @@ def get_device():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Train YOLOv11 segmentation model",
+        description="Train a YOLO detection or segmentation model",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
@@ -41,7 +46,7 @@ def main():
         '--model', '-m',
         type=str,
         default='yolo11n-seg.pt',
-        help='Base model (yolo11n-seg, yolo11s-seg, yolo11m-seg, yolo11l-seg, yolo11x-seg)'
+        help='Base model or checkpoint path (e.g. yolo11m.pt, yolo11m-seg.pt, /path/to/best.pt)'
     )
     parser.add_argument(
         '--resume',
@@ -96,8 +101,8 @@ def main():
     parser.add_argument(
         '--project',
         type=str,
-        default='runs/segment',
-        help='Project directory for saving results'
+        default=None,
+        help='Project directory for saving results (default: runs/<task>)'
     )
     parser.add_argument(
         '--name',
@@ -215,19 +220,6 @@ def main():
         model_name = Path(args.model).stem.replace('.', '_')
         args.name = f'{model_name}_{timestamp}'
     
-    print("="*60)
-    print("YOLOv11 Segmentation Training")
-    print("="*60)
-    print(f"Model: {args.model}")
-    print(f"Dataset: {args.data}")
-    print(f"Device: {device}")
-    print(f"Epochs: {args.epochs}")
-    print(f"Batch size: {args.batch}")
-    print(f"Image size: {args.imgsz}")
-    print(f"Validation TTA: {val_augment}")
-    print(f"Output: {args.project}/{args.name}")
-    print("="*60)
-    
     # Verify dataset exists
     if not os.path.exists(args.data):
         print(f"\nError: Dataset config not found: {args.data}")
@@ -248,6 +240,24 @@ def main():
     else:
         print(f"\nLoading base model: {args.model}")
         model = YOLO(args.model)
+
+    task_name = getattr(model, 'task', 'train')
+    if args.project is None:
+        args.project = f"runs/{task_name}"
+
+    print("="*60)
+    print(f"YOLO {task_name.capitalize()} Training")
+    print("="*60)
+    print(f"Model: {args.model}")
+    print(f"Dataset: {args.data}")
+    print(f"Task: {task_name}")
+    print(f"Device: {device}")
+    print(f"Epochs: {args.epochs}")
+    print(f"Batch size: {args.batch}")
+    print(f"Image size: {args.imgsz}")
+    print(f"Validation TTA: {val_augment}")
+    print(f"Output: {args.project}/{args.name}")
+    print("="*60)
 
     if args.snapshot_best_confusion:
         best_state = {'signature': None}

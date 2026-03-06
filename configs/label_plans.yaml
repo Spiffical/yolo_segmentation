@@ -1,0 +1,145 @@
+plans:
+  coarse_v1_bio8:
+    description: >
+      First-pass coarse biological label plan for MBARI/FathomNet detection.
+      Keeps visually coherent head classes and drops the unresolved long tail.
+    drop_unmapped: true
+    classes:
+      echinoderm:
+        - Strongylocentrotus fragilis
+        - Ophiuroidea
+        - Peniagone
+        - Psolus squamatus
+        - Asteroidea
+        - Rathbunaster californicus
+        - Pannychia moseleyi
+        - Crinoidea
+        - Holothuroidea
+        - Hippasteria
+        - Peniagone vitrea
+        - Elpidia
+        - Paelopatides confundens
+        - Abyssocucumis abyssorum
+        - Florometra serratissima
+        - Peniagone gracilis
+      coral_anemone:
+        - Alcyonacea
+        - Actiniaria
+        - Keratoisis
+        - Paragorgia arborea
+        - Pennatulacea
+        - Funiculina
+        - Zoantharia
+        - Heteropolypus ritteri
+        - Isosicyonis
+        - soft coral
+        - Paragorgia
+        - Umbellula
+        - Hormathiidae
+        - Liponema brevicorne
+        - Chrysopathes speciosa
+        - black coral
+        - Actinernus
+        - Isidella tentaculum
+        - Swiftia kofoidi
+        - Ceriantharia
+        - Scleractinia
+        - Isidella
+        - Chrysogorgia
+        - Gersemia juliepackardae
+        - Swiftia simplex
+        - Acanthascinae
+        - Stony coral
+        - Coralliidae
+        - Primnoidae
+      gelatinous:
+        - Bathochordaeus stygius
+        - Pyrosoma
+        - Bathochordaeus
+        - Solmissus
+        - Lampocteis cruentiventer
+        - Bargmannia elongata
+        - Poralia rufescens
+        - Nanomia bijuga
+        - medusa
+        - Tunicata
+        - Bathochordaeus mcnutti
+        - Aegina
+        - Atolla
+        - Benthocodon
+        - Physonectae
+        - Pyrosoma atlanticum
+        - Apolemia
+        - Beroe
+        - Praya dubia
+        - Prayidae
+        - Siphonophorae
+        - Aegina citrea
+        - Chaetognatha
+      sponge:
+        - Porifera
+        - sponge
+        - Heterochone calyx
+        - Hexactinellida
+        - Staurocalyptus
+        - Farrea
+        - Psamminidae
+        - Parastenella
+        - Asbestopluma
+        - Asbestopluma monticola
+        - Staurocalyptus solidus
+      fish:
+        - Anoplopoma
+        - Sebastolobus
+        - Merluccius
+        - Coryphaenoides
+        - Sebastidae
+        - Microstomus pacificus
+        - Sebastes
+        - Embassichthys bathybius
+        - Beringraja rhina
+        - Pleuronectiformes
+      crustacean:
+        - Chionoecetes tanneri
+        - Munidopsis
+        - Galatheoidea
+        - Munnopsidae
+        - Eusergestes similis
+        - Paralomis multispina
+        - Pandalus amplus
+        - Caridea
+        - Eumalacostraca
+        - shrimp
+        - Amphipoda
+        - Pandalus platyceros
+        - Chorilia longipes
+      other_invertebrate:
+        - Sabellidae
+        - Serpulidae
+        - Tomopteris
+        - Poeobius meseres
+        - Gastropoda
+        - Vesicomyidae
+      cephalopod:
+        - Octopus
+        - Vampyroteuthis
+        - Chiroteuthis calyx
+        - Histioteuthis heteropsis
+        - Dosidicus
+
+  coarse_v1_bio8_plus_gear:
+    description: >
+      Same as coarse_v1_bio8, plus a nuisance class for ROV hardware and debris.
+    extends: coarse_v1_bio8
+    drop_unmapped: true
+    classes:
+      gear_debris:
+        - equipment
+        - manipulator
+        - trash
+        - cable
+        - bottle
+        - can
+        - colander
+        - laser
+        - net

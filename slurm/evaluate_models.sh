@@ -38,7 +38,10 @@ VENV_PATH=""
 CHECKPOINTS_ROOT=""
 DATASET_YAML=""
 DATA_TARBALL=""
+TASK="segment"
 CONVERT_MODE="binary"
+LABEL_PLAN=""
+LABEL_PLANS_FILE=""
 CONVERT_TOP_N="100"
 VAL_RATIO="0.2"
 SPLIT_SEED="42"
@@ -48,7 +51,7 @@ EVAL_IMGSZ="640"
 EVAL_BATCH="16"
 EVAL_WORKERS="8"
 EVAL_DEVICE="auto"
-PRIMARY_METRIC="metrics/mAP50-95(M)"
+PRIMARY_METRIC=""
 CHECKPOINT_PATTERN="weights/best.pt"
 MAX_MODELS=""
 
@@ -74,8 +77,20 @@ while [[ $# -gt 0 ]]; do
             DATA_TARBALL="$2"
             shift 2
             ;;
+        --task)
+            TASK="$2"
+            shift 2
+            ;;
         --mode)
             CONVERT_MODE="$2"
+            shift 2
+            ;;
+        --label-plan)
+            LABEL_PLAN="$2"
+            shift 2
+            ;;
+        --label-plans-file)
+            LABEL_PLANS_FILE="$2"
             shift 2
             ;;
         --top_n|--top-n)
@@ -162,6 +177,28 @@ if [ -z "${VENV_PATH}" ]; then
     done
 fi
 
+if [ -z "${LABEL_PLANS_FILE}" ]; then
+    LABEL_PLANS_FILE="${REPO_DIR}/configs/label_plans.yaml"
+fi
+
+if [ "${TASK}" != "detect" ] && [ "${TASK}" != "segment" ]; then
+    echo "ERROR: --task must be 'detect' or 'segment' (got: ${TASK})"
+    exit 1
+fi
+
+if [ "${CONVERT_MODE}" = "coarse" ] && [ -z "${LABEL_PLAN}" ]; then
+    echo "ERROR: --label-plan is required when --mode coarse"
+    exit 1
+fi
+
+if [ -z "${PRIMARY_METRIC}" ]; then
+    if [ "${TASK}" = "detect" ]; then
+        PRIMARY_METRIC="metrics/mAP50-95(B)"
+    else
+        PRIMARY_METRIC="metrics/mAP50-95(M)"
+    fi
+fi
+
 OUTPUT_BASE="${SCRATCH}/yolo_seg_eval"
 RUN_DATE=$(date +%Y-%m-%d)
 RUN_NAME="eval_${SLURM_JOB_ID}"
@@ -177,6 +214,8 @@ echo "Repo: ${REPO_DIR}"
 echo "Checkpoints root: ${CHECKPOINTS_ROOT}"
 echo "Dataset YAML: ${DATASET_YAML:-<generated from raw data>}"
 echo "Data tarball: ${DATA_TARBALL:-<not provided>}"
+echo "Task: ${TASK}"
+echo "Mode: ${CONVERT_MODE} (label_plan=${LABEL_PLAN:-<none>})"
 echo "Venv: ${VENV_PATH:-not set}"
 echo "Output: ${OUTPUT_DIR}"
 echo "============================================"
@@ -190,7 +229,10 @@ venv_path: ${VENV_PATH}
 checkpoints_root: ${CHECKPOINTS_ROOT}
 dataset_yaml: ${DATASET_YAML}
 data_tarball: ${DATA_TARBALL}
+task: ${TASK}
 mode: ${CONVERT_MODE}
+label_plan: ${LABEL_PLAN}
+label_plans_file: ${LABEL_PLANS_FILE}
 top_n: ${CONVERT_TOP_N}
 val_ratio: ${VAL_RATIO}
 split_seed: ${SPLIT_SEED}
@@ -253,16 +295,28 @@ if [ -z "${DATASET_YAML}" ]; then
         exit 1
     fi
 
-    python scripts/convert_coco_to_yolo.py \
-        --coco_json "${COCO_JSON}" \
-        --output_dir "${YOLO_DATASET}" \
-        --image_dir "${IMAGE_DIR}" \
-        --val_ratio "${VAL_RATIO}" \
-        --seed "${SPLIT_SEED}" \
-        --mode "${CONVERT_MODE}" \
-        --top_n "${CONVERT_TOP_N}" \
-        --min_annotations 0 \
+    CONVERT_CMD=(
+        python scripts/convert_coco_to_yolo.py
+        --coco_json "${COCO_JSON}"
+        --output_dir "${YOLO_DATASET}"
+        --image_dir "${IMAGE_DIR}"
+        --task "${TASK}"
+        --val_ratio "${VAL_RATIO}"
+        --seed "${SPLIT_SEED}"
+        --mode "${CONVERT_MODE}"
+        --top_n "${CONVERT_TOP_N}"
+        --min_annotations 0
         --workers "${EVAL_WORKERS}"
+    )
+
+    if [ -n "${LABEL_PLAN}" ]; then
+        CONVERT_CMD+=(--label_plan "${LABEL_PLAN}")
+    fi
+    if [ -n "${LABEL_PLANS_FILE}" ]; then
+        CONVERT_CMD+=(--label_plans_file "${LABEL_PLANS_FILE}")
+    fi
+
+    "${CONVERT_CMD[@]}"
 
     DATASET_YAML="${YOLO_DATASET}/dataset.yaml"
 else

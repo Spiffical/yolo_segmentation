@@ -1,11 +1,13 @@
 
-# YOLO Segmentation Training for MBARI Underwater Images
+# YOLO Detection and Segmentation Training for MBARI Underwater Images
 
-This repository contains tools for training YOLOv11 instance segmentation models on MBARI/FathomNet underwater imagery.
+This repository contains tools for training Ultralytics YOLO detection and
+instance segmentation models on MBARI/FathomNet underwater imagery.
 
 ## Features
 
-- **COCO RLE to YOLO polygon conversion** with multiple category modes
+- **COCO to YOLO conversion** for detection boxes and segmentation polygons
+- **Curated coarse label plans** for MBARI/FathomNet long-tail labels
 - **Automatic train/val splitting** with stratification
 - **Local training scripts** with full CLI control
 - **DRAC cluster support** with SLURM submission scripts
@@ -26,40 +28,66 @@ pip install -r requirements.txt
 ### 2. Convert COCO Dataset to YOLO Format
 
 ```bash
-# Full dataset (all 1897 categories)
+# Binary detection from native COCO boxes
 python scripts/convert_coco_to_yolo.py \
     --coco_json data/seg_masks/train.json \
-    --output_dir data/yolo_dataset \
+    --output_dir data/yolo_detect_binary \
     --image_dir /mnt/z/yolo/data/images/train \
-    --mode all
+    --task detect \
+    --mode binary
 
-# Top 50 categories only
+# Coarse detection using the curated bio8 label plan
 python scripts/convert_coco_to_yolo.py \
-    --mode top_n --top_n 50
+    --coco_json data/seg_masks/train.json \
+    --output_dir data/yolo_detect_coarse \
+    --image_dir /mnt/z/yolo/data/images/train \
+    --task detect \
+    --mode coarse \
+    --label_plan coarse_v1_bio8
 
-# Binary segmentation (object vs background)
+# Binary segmentation from masks
 python scripts/convert_coco_to_yolo.py \
+    --coco_json data/seg_masks/train.json \
+    --output_dir data/yolo_segment_binary \
+    --image_dir /mnt/z/yolo/data/images/train \
+    --task segment \
     --mode binary
 ```
 
 ### 3. Validate Conversion (Optional)
 
 ```bash
-# Visualize random samples to verify masks
-python scripts/validate.py --n_samples 5
+# Visualize random samples to verify segmentation masks
+python scripts/validate.py --dataset data/yolo_segment_binary --n_samples 5
 ```
 
 ### 4. Train Locally
 
 ```bash
-# Quick test with small model
+# Quick binary detection smoke test
 python scripts/train.py \
-    --model yolo11n-seg.pt \
-    --epochs 10 \
+    --data data/yolo_detect_binary/dataset.yaml \
+    --model yolo11n.pt \
+    --epochs 5 \
     --batch 8
 
-# Full training with medium model
+# Quick segmentation smoke test
 python scripts/train.py \
+    --data data/yolo_segment_binary/dataset.yaml \
+    --model yolo11n-seg.pt \
+    --epochs 5 \
+    --batch 4
+
+# Full coarse detection training
+python scripts/train.py \
+    --data data/yolo_detect_coarse/dataset.yaml \
+    --model yolo11l.pt \
+    --epochs 100 \
+    --batch 16
+
+# Full segmentation training
+python scripts/train.py \
+    --data data/yolo_segment_binary/dataset.yaml \
     --model yolo11m-seg.pt \
     --epochs 100 \
     --batch 16
@@ -123,36 +151,52 @@ scp data/mbari_raw.tar.gz <user>@narval.computecanada.ca:~/projects/def-kmoran/<
 ### 4. Submit Training Job
 
 ```bash
-# Binary segmentation (object vs background)
-sbatch slurm/train.sh --mode binary
+# Binary detection (object vs background)
+sbatch slurm/train.sh --task detect --mode binary
 
-# Top 100 categories
-sbatch slurm/train.sh --mode top_n --top_n 100
+# Coarse biological detection
+sbatch slurm/train.sh \
+    --task detect \
+    --mode coarse \
+    --label-plan coarse_v1_bio8
 
-# All categories (1897 classes)
-sbatch slurm/train.sh --mode all
+# Top 100 segmentation classes
+sbatch slurm/train.sh --task segment --mode top_n --top_n 100
+
+# Full segmentation dataset
+sbatch slurm/train.sh --task segment --mode all
 
 # If code is on /project but venv is under /home:
 sbatch slurm/train.sh \
     --repo /project/def-kmoran/<user>/yolo_segmentation \
     --venv /home/<user>/yolo_segmentation/.venv \
+    --task detect \
     --mode binary
 ```
 
 The job will:
 1. Extract raw data to `SLURM_TMPDIR` (fast local SSD)
-2. Convert COCO RLE → YOLO polygons
-3. Train YOLOv11 segmentation
-4. Save results to `runs/segment/`
+2. Convert COCO annotations → YOLO detection or segmentation labels
+3. Train the requested YOLO task
+4. Save results under `$SCRATCH/yolo_seg/...`
 
 `slurm/train.sh` automatically enables multi-GPU DDP when more than one GPU is
 allocated (for example, `sbatch --gpus-per-node=h100:4 ...`).
 
 ## Sweep Workflow (Nibi + W&B)
 
-Use the example sweep config:
+Use the example sweep configs:
 
 ```bash
+# Binary detection
+python scripts/submit_sweep.py \
+    --config configs/nibi_detect_binary.yaml
+
+# Coarse detection
+python scripts/submit_sweep.py \
+    --config configs/nibi_detect_coarse_v1.yaml
+
+# Binary segmentation
 python scripts/submit_sweep.py \
     --config configs/nibi_sweep_binary.yaml
 ```
@@ -164,7 +208,7 @@ experiment:
 - `mem` (e.g. `32000M`)
 - `time` (e.g. `24:00:00`)
 
-For a FathomNet-like training regime (`imgsz=640`, `optimizer=auto`,
+For a FathomNet-like segmentation regime (`imgsz=640`, `optimizer=auto`,
 `patience=5`, `lr0=0.01`), use:
 
 ```bash
@@ -172,7 +216,7 @@ python scripts/submit_sweep.py \
     --config configs/nibi_sweep_binary_fathomnet_like.yaml
 ```
 
-For multiclass experiments:
+For segmentation multiclass experiments:
 
 ```bash
 # Top-N multiclass (recommended first)
@@ -186,11 +230,11 @@ python scripts/submit_sweep.py \
 
 This dry-run writes commands and a manifest under `runs/sweeps/...`.
 
-To actually submit:
+To actually submit a sweep:
 
 ```bash
 python scripts/submit_sweep.py \
-    --config configs/nibi_sweep_binary.yaml \
+    --config configs/nibi_detect_binary.yaml \
     --submit
 ```
 
@@ -212,6 +256,7 @@ After training finishes, run one evaluation job that benchmarks all discovered
 sbatch slurm/evaluate_models.sh \
     --checkpoints-root /scratch/$USER/yolo_seg/2026-02-13 \
     --data /project/def-kmoran/merileo/yolo_segmentation/data/mbari_raw.tar.gz \
+    --task detect \
     --mode binary \
     --splits val,test \
     --split val
@@ -239,6 +284,18 @@ Outputs:
 - `runs/label_profile/label_profile.md`
 - `runs/label_profile/category_counts.csv`
 
+## Coarse Label Plans
+
+The MBARI/FathomNet taxonomy is long-tailed and mixed-resolution, so the repo
+includes curated coarse label plans in `configs/label_plans.yaml`.
+
+- `coarse_v1_bio8`: `echinoderm`, `coral_anemone`, `gelatinous`, `sponge`,
+  `fish`, `crustacean`, `other_invertebrate`, `cephalopod`
+- `coarse_v1_bio8_plus_gear`: same as above plus `gear_debris`
+
+The design rationale and approximate coverage are documented in
+[docs/coarse_label_plan.md](/home/sbialek/ONC/yolo_segmentation/docs/coarse_label_plan.md).
+
 ## Run Best Model On Local ONC Videos
 
 ```bash
@@ -256,21 +313,24 @@ Outputs include annotated videos and `inference_summary.csv`.
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
-| `all` | All 1897 categories | Full multi-class segmentation |
-| `top_n` | Top N categories by count | Focus on common species |
-| `binary` | Object vs background | Species-agnostic detection |
+| `all` | All native categories | Full multi-class training |
+| `top_n` | Top N categories by count | Focus on common native labels |
+| `binary` | Object vs background | Species-agnostic detection or segmentation |
+| `coarse` | Named plan from `configs/label_plans.yaml` | Stable biological grouping |
 
 ## Model Sizes
 
-| Model | Parameters | Speed | Accuracy |
-|-------|------------|-------|----------|
-| yolo11n-seg | 2.6M | Fastest | Good |
-| yolo11s-seg | 11.2M | Fast | Better |
-| yolo11m-seg | 25.3M | Medium | Best local |
-| yolo11l-seg | 43.7M | Slow | Better |
-| yolo11x-seg | 68.7M | Slowest | Best |
+| Model | Task | Parameters | Speed | Accuracy |
+|-------|------|------------|-------|----------|
+| yolo11n.pt | detect | small | Fastest | Good |
+| yolo11l.pt | detect | large | Slow | Better |
+| yolo11n-seg.pt | segment | 2.6M | Fastest | Good |
+| yolo11m-seg.pt | segment | 25.3M | Medium | Best local |
+| yolo11x-seg.pt | segment | 68.7M | Slowest | Best |
 
-For local testing, start with `yolo11n-seg`. For cluster training, use `yolo11m-seg` or larger.
+For local detection testing, start with `yolo11n.pt`. For local segmentation
+testing, start with `yolo11n-seg.pt`. On cluster, use `yolo11l.pt`,
+`yolo11m-seg.pt`, or larger models as resources allow.
 
 ## License
 

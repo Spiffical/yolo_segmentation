@@ -11,26 +11,28 @@
 #SBATCH --mail-user=spencer.bialek@gmail.com
 
 # ============================================================================
-# YOLOv11 Segmentation Training on DRAC Cluster
+# YOLO Detection / Segmentation Training on DRAC Cluster
 # ============================================================================
 # 
 # Usage:
 #   sbatch slurm/train.sh                              # Use defaults
-#   sbatch slurm/train.sh --mode binary                # Binary segmentation
+#   sbatch slurm/train.sh --task detect --mode binary  # Binary detection
 #   sbatch slurm/train.sh --mode top_n --top_n 100     # Top 100 categories
-#   sbatch slurm/train.sh --model yolo11l-seg.pt       # Use larger model
+#   sbatch slurm/train.sh --model yolo11l-seg.pt       # Use larger seg model
 #   sbatch --cpus-per-task=6 --mem=32000M slurm/train.sh --mode binary
 #
 # Arguments:
 #   --repo DIR          Path to yolo_segmentation repo (default: ~/yolo_segmentation)
 #   --venv DIR          Path to Python virtual environment (default: auto-detect)
 #   --data FILE         Path to data tarball (default: REPO/data/mbari_raw.tar.gz)
-#   --mode MODE         Conversion mode: binary, top_n, all (default: top_n)
+#   --task TASK         YOLO task: detect or segment (default: segment)
+#   --mode MODE         Conversion mode: binary, top_n, all, coarse (default: top_n)
+#   --label-plan NAME   Named coarse label plan when --mode coarse
+#   --label-plans-file  Path to YAML file of coarse label plans
 #   --top_n N           Number of top categories for top_n mode (default: 100)
 #   --val_ratio R       Validation split ratio (default: 0.2)
 #   --split-seed S      Random seed used when creating train/val split (default: 42)
-#   --model MODEL       YOLO model: yolo11n-seg.pt, yolo11s-seg.pt, yolo11m-seg.pt,
-#                                   yolo11l-seg.pt, yolo11x-seg.pt (default: yolo11m-seg.pt)
+#   --model MODEL       YOLO model or checkpoint path (default depends on task)
 #   --epochs N          Number of training epochs (default: 100)
 #   --batch N           Batch size (default: 16)
 #   --wandb-project P   W&B project name (default: yolo-segmentation)
@@ -45,7 +47,7 @@
 #   Or add to ~/.bashrc for persistence.
 #
 # Output:
-#   Results saved to: $SCRATCH/yolo_seg/<date>/<mode>_<job_id>/
+#   Results saved to: $SCRATCH/yolo_seg/<date>/<task>_<mode>_<job_id>/
 #   Includes: run_config.yaml, weights/best.pt, weights/last.pt, args.yaml
 #
 # Before first run:
@@ -63,13 +65,16 @@ VENV_PATH=""
 DATA_TARBALL=""
 
 # Default conversion options
+TASK="segment"
 CONVERT_MODE="top_n"
+LABEL_PLAN=""
+LABEL_PLANS_FILE=""
 CONVERT_TOP_N="100"
 VAL_RATIO="0.2"
 SPLIT_SEED="42"
 
 # Default training options
-MODEL="yolo11m-seg.pt"
+MODEL=""
 EPOCHS="100"
 BATCH="16"
 
@@ -91,12 +96,24 @@ while [[ $# -gt 0 ]]; do
             DATA_TARBALL="$2"
             shift 2
             ;;
+        --task)
+            TASK="$2"
+            shift 2
+            ;;
         --venv)
             VENV_PATH="$2"
             shift 2
             ;;
         --mode)
             CONVERT_MODE="$2"
+            shift 2
+            ;;
+        --label-plan)
+            LABEL_PLAN="$2"
+            shift 2
+            ;;
+        --label-plans-file)
+            LABEL_PLANS_FILE="$2"
             shift 2
             ;;
         --top_n|--top-n)
@@ -169,6 +186,28 @@ if [ -z "${DATA_TARBALL}" ]; then
     DATA_TARBALL="${REPO_DIR}/data/mbari_raw.tar.gz"
 fi
 
+if [ -z "${LABEL_PLANS_FILE}" ]; then
+    LABEL_PLANS_FILE="${REPO_DIR}/configs/label_plans.yaml"
+fi
+
+if [ "${TASK}" != "detect" ] && [ "${TASK}" != "segment" ]; then
+    echo "ERROR: --task must be 'detect' or 'segment' (got: ${TASK})"
+    exit 1
+fi
+
+if [ -z "${MODEL}" ]; then
+    if [ "${TASK}" = "detect" ]; then
+        MODEL="yolo11m.pt"
+    else
+        MODEL="yolo11m-seg.pt"
+    fi
+fi
+
+if [ "${CONVERT_MODE}" = "coarse" ] && [ -z "${LABEL_PLAN}" ]; then
+    echo "ERROR: --label-plan is required when --mode coarse"
+    exit 1
+fi
+
 if [ -z "${VENV_PATH}" ]; then
     for candidate in \
         "${REPO_DIR}/.venv" \
@@ -183,14 +222,14 @@ if [ -z "${VENV_PATH}" ]; then
 fi
 
 # Output directory - use $SCRATCH for large training outputs
-# Organized as: $SCRATCH/yolo_seg/<date>/<mode>_<job_id>/
+# Organized as: $SCRATCH/yolo_seg/<date>/<task>_<mode>_<job_id>/
 if [ -z "${SCRATCH:-}" ]; then
     echo "ERROR: SCRATCH is not set. This job is configured to write outputs to \$SCRATCH only."
     exit 1
 fi
 OUTPUT_BASE="${SCRATCH}/yolo_seg"
 RUN_DATE=$(date +%Y-%m-%d)
-RUN_NAME="${CONVERT_MODE}_${SLURM_JOB_ID}"
+RUN_NAME="${TASK}_${CONVERT_MODE}_${SLURM_JOB_ID}"
 OUTPUT_DIR="${OUTPUT_BASE}/${RUN_DATE}/${RUN_NAME}"
 
 echo "============================================"
@@ -201,7 +240,8 @@ echo "Started: $(date)"
 echo "============================================"
 echo "Repo: ${REPO_DIR}"
 echo "Data: ${DATA_TARBALL}"
-echo "Mode: ${CONVERT_MODE} (top_n=${CONVERT_TOP_N})"
+echo "Task: ${TASK}"
+echo "Mode: ${CONVERT_MODE} (top_n=${CONVERT_TOP_N}, label_plan=${LABEL_PLAN:-<none>})"
 echo "Model: ${MODEL}"
 echo "Epochs: ${EPOCHS}, Batch: ${BATCH}"
 echo "Venv: ${VENV_PATH:-not set}"
@@ -251,7 +291,10 @@ data_tarball: ${DATA_TARBALL}
 output_dir: ${OUTPUT_DIR}
 
 # Data conversion
+task: ${TASK}
 mode: ${CONVERT_MODE}
+label_plan: ${LABEL_PLAN}
+label_plans_file: ${LABEL_PLANS_FILE}
 top_n: ${CONVERT_TOP_N}
 val_ratio: ${VAL_RATIO}
 split_seed: ${SPLIT_SEED}
@@ -354,11 +397,11 @@ else
 fi
 
 # ============================================================================
-# 3. Convert COCO RLE to YOLO Format
+# 3. Convert COCO annotations to YOLO Format
 # ============================================================================
 echo ""
-echo "[3/5] Converting COCO RLE to YOLO polygon format..."
-echo "      Mode: ${CONVERT_MODE}, Top N: ${CONVERT_TOP_N}, Val ratio: ${VAL_RATIO}"
+echo "[3/5] Converting COCO annotations to YOLO ${TASK} labels..."
+echo "      Mode: ${CONVERT_MODE}, Top N: ${CONVERT_TOP_N}, Label plan: ${LABEL_PLAN:-<none>}, Val ratio: ${VAL_RATIO}"
 
 YOLO_DATASET="${SLURM_TMPDIR}/yolo_dataset"
 NUM_CPUS=${SLURM_CPUS_PER_TASK:-8}
@@ -374,16 +417,28 @@ if [ "${CONVERT_WORKERS}" -lt 1 ]; then
 fi
 
 cd "${REPO_DIR}"
-python scripts/convert_coco_to_yolo.py \
-    --coco_json "${COCO_JSON}" \
-    --output_dir "${YOLO_DATASET}" \
-    --image_dir "${IMAGE_DIR}" \
-    --val_ratio "${VAL_RATIO}" \
-    --seed "${SPLIT_SEED}" \
-    --mode "${CONVERT_MODE}" \
-    --top_n "${CONVERT_TOP_N}" \
-    --min_annotations 0 \
+CONVERT_CMD=(
+    python scripts/convert_coco_to_yolo.py
+    --coco_json "${COCO_JSON}"
+    --output_dir "${YOLO_DATASET}"
+    --image_dir "${IMAGE_DIR}"
+    --task "${TASK}"
+    --val_ratio "${VAL_RATIO}"
+    --seed "${SPLIT_SEED}"
+    --mode "${CONVERT_MODE}"
+    --top_n "${CONVERT_TOP_N}"
+    --min_annotations 0
     --workers "${CONVERT_WORKERS}"
+)
+
+if [ -n "${LABEL_PLAN}" ]; then
+    CONVERT_CMD+=(--label_plan "${LABEL_PLAN}")
+fi
+if [ -n "${LABEL_PLANS_FILE}" ]; then
+    CONVERT_CMD+=(--label_plans_file "${LABEL_PLANS_FILE}")
+fi
+
+"${CONVERT_CMD[@]}"
 
 # Verify conversion
 if [ ! -f "${YOLO_DATASET}/dataset.yaml" ]; then
@@ -417,7 +472,7 @@ if [ "${WANDB_ENABLED}" = true ]; then
     
     # Set W&B run name if not provided
     if [ -z "${WANDB_RUN_NAME}" ]; then
-        WANDB_RUN_NAME="${CONVERT_MODE}_${MODEL%.pt}_${SLURM_JOB_ID}"
+        WANDB_RUN_NAME="${TASK}_${CONVERT_MODE}_${MODEL%.pt}_${SLURM_JOB_ID}"
     fi
     
     # Export W&B environment variables for ultralytics (SCRATCH only).
