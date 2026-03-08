@@ -199,14 +199,21 @@ find_wandb_run_id() {
         return 0
     fi
 
-    local wandb_root="${output_dir}/runtime/wandb"
-    local latest_link="${wandb_root}/latest-run"
+    local runtime_root="${output_dir}/runtime"
+    local wandb_root="${runtime_root}/wandb"
     local candidate=""
+    local latest_link=""
 
-    if [[ -e "${latest_link}" ]]; then
+    latest_link="$(find "${runtime_root}" -type l -name latest-run 2>/dev/null | sort | tail -n 1 || true)"
+    if [[ -n "${latest_link}" && -e "${latest_link}" ]]; then
         candidate="$(basename "$(readlink -f "${latest_link}")")"
-    elif [[ -d "${wandb_root}" ]]; then
-        candidate="$(find "${wandb_root}" -maxdepth 1 -mindepth 1 -type d \( -name 'run-*' -o -name 'offline-run-*' \) | sort | tail -n 1 | xargs -r basename)"
+    elif [[ -d "${wandb_root}" || -d "${runtime_root}" ]]; then
+        candidate="$(
+            find "${runtime_root}" -type d \( -name 'run-*' -o -name 'offline-run-*' \) 2>/dev/null \
+                | sort \
+                | tail -n 1 \
+                | xargs -r basename
+        )"
     fi
 
     if [[ -n "${candidate}" ]]; then
