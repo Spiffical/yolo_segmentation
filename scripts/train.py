@@ -7,6 +7,7 @@ cluster deployment.
 """
 
 import os
+import json
 import shutil
 import sys
 import argparse
@@ -152,6 +153,18 @@ def main():
         help='Enable Weights & Biases logging'
     )
     parser.add_argument(
+        '--wandb-run-id',
+        type=str,
+        default=None,
+        help='Explicit W&B run ID to resume into'
+    )
+    parser.add_argument(
+        '--wandb-resume',
+        type=str,
+        default=None,
+        help="W&B resume mode (e.g. allow, must) when resuming a run ID"
+    )
+    parser.add_argument(
         '--tensorboard',
         action='store_true',
         default=True,
@@ -245,6 +258,12 @@ def main():
     if args.project is None:
         args.project = f"runs/{task_name}"
 
+    if resume_ckpt is not None:
+        pre_output_dir = resume_ckpt.parent.parent
+    else:
+        pre_output_dir = Path(args.project) / args.name
+    pre_output_dir.mkdir(parents=True, exist_ok=True)
+
     print("="*60)
     print(f"YOLO {task_name.capitalize()} Training")
     print("="*60)
@@ -328,6 +347,11 @@ def main():
     wandb = None
     settings = None
     
+    wandb_run_id = args.wandb_run_id or os.environ.get('WANDB_RUN_ID')
+    wandb_resume = args.wandb_resume or os.environ.get('WANDB_RESUME')
+    if wandb_run_id and not wandb_resume:
+        wandb_resume = 'allow'
+
     if use_wandb:
         try:
             import wandb
@@ -347,11 +371,13 @@ def main():
                 print(f"W&B group: {wandb_group}")
             if wandb_tags:
                 print(f"W&B tags: {wandb_tags}")
+            if wandb_run_id:
+                print(f"W&B run ID: {wandb_run_id} (resume={wandb_resume})")
             
             # Pre-initialize run so Ultralytics callbacks reuse this metadata
             # instead of inferring project from output filesystem path.
             if wandb.run is None:
-                wandb.init(
+                init_kwargs = dict(
                     project=wandb_project,
                     name=wandb_name,
                     group=wandb_group,
@@ -364,6 +390,26 @@ def main():
                         'lr0': args.lr0,
                         'optimizer': args.optimizer,
                     }
+                )
+                if wandb_run_id:
+                    init_kwargs['id'] = wandb_run_id
+                    init_kwargs['resume'] = wandb_resume
+                wandb.init(**init_kwargs)
+
+            if wandb.run is not None:
+                wandb_meta_path = pre_output_dir / 'wandb_run.json'
+                wandb_meta_path.write_text(
+                    json.dumps(
+                        {
+                            'project': wandb.run.project,
+                            'name': wandb.run.name,
+                            'id': wandb.run.id,
+                            'url': wandb.run.url,
+                            'group': wandb_group,
+                        },
+                        indent=2,
+                    ) + "\n",
+                    encoding='utf-8',
                 )
         except ImportError:
             print("W&B requested but wandb not installed. Skipping.")

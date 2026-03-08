@@ -39,6 +39,9 @@
 #   --wandb-name NAME   W&B run name (default: auto-generated)
 #   --wandb-group G     W&B group name for related runs (default: unset)
 #   --wandb-tags TAGS   Comma-separated W&B tags (default: unset)
+#   --resume FILE       Resume full training state from weights/last.pt
+#   --wandb-run-id ID   Resume logging into an existing W&B run ID
+#   --wandb-resume MODE W&B resume mode, e.g. allow or must
 #
 # Weights & Biases:
 #   To enable W&B logging, set WANDB_API_KEY before submitting:
